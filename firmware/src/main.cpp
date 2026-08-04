@@ -1,4 +1,4 @@
-// Stepper-Plucked-Strings-GMB — ESP32-S3 firmware entry point.
+// Servo-bowed-strings-GMB — ESP32-S3 firmware entry point.
 //
 // Wires the pure-core logic (src/core/) to the ESP32 platform adapters
 // (src/platform/esp32/). The core is unit-tested on the host; this file is the

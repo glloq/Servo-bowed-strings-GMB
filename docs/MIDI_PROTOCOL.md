@@ -1,4 +1,4 @@
-# MIDI Protocol — Stepper-Plucked-Strings-GMB
+# MIDI Protocol — Servo-bowed-strings-GMB
 
 > Sources: `SPECIFICATION.md` §8 · `STRING_FRET_SELECTION.md` (full) · `SYSEX_CAPABILITIES.md` (full).
 > Code: `firmware/src/core/midi/{MidiEvent.h, StringFretSelector.*}`, `core/gmb/{GmbSysEx.*, Capabilities.*}`.
@@ -119,7 +119,7 @@ struct SelectorConfig {
   `mapStringValue(rawValue)` returns the physical axis index or -1.
 * **Fret**: `logical fret = CC value + offset`. `mapFretValue(rawValue)` returns
   the fret or -1. **Fret 0 automatically results in: finger raised, no press,
-  plucking the open string.**
+  bowing the open string.**
 
 Normal vs. reversed order example (4 strings):
 
@@ -165,7 +165,7 @@ selection3 = string 4/fret 7; then Note 42 → sel1, Note 55 → sel2, Note 64 �
   **oldest selection without a fret**, add the fret to it, mark it complete.
 * **Note On** (`onNoteOn`): look for the **oldest complete selection on the
   channel**, associate the note, validate consistency, remove it from the queue,
-  prepare the engine, schedule the press and pluck. Returns:
+  prepare the engine, schedule the press and the bow attack. Returns:
 
 ```cpp
 struct NoteResolution {
@@ -183,8 +183,8 @@ If `prepareOnCompleteSelection` (enabled by default), as soon as a string/fret
 pair is complete, the controller can start the mechanical preparation (finger
 release, motor movement) **without waiting for the Note On**. The Note On retains
 its role as the musical trigger. If the motor has not reached the fret at the
-moment of the Note On: the pluck is queued, the motor finishes, the finger
-presses, then the pluck executes — **no early plucking**.
+moment of the Note On: the bow attack is queued, the motor finishes, the finger
+presses, then the bow lowers and the motor spins up — **no early bowing**.
 
 ### 2.10 Note / string / fret consistency (`NotePositionPolicy`)
 
@@ -249,9 +249,9 @@ CC20 and CC21 are presented as recommended choices.
     "selectionTimeoutMs": 100,
     "prepareOnCompleteSelection": true,
     "queueDepth": 32,
-    "string": { "ccNumber": 20, "minimum": 1, "maximum": 6, "offset": 0,
-                "numbering": "oneBased", "reverseOrder": false, "mapping": [0,1,2,3,4,5] },
-    "fret":   { "ccNumber": 21, "minimum": 0, "maximum": 24, "offset": 0,
+    "string": { "ccNumber": 20, "minimum": 1, "maximum": 4, "offset": 0,
+                "numbering": "oneBased", "reverseOrder": false, "mapping": [0,1,2,3] },
+    "fret":   { "ccNumber": 21, "minimum": 0, "maximum": 19, "offset": 0,
                 "invalidValuePolicy": "automaticFallback" },
     "validation": { "notePositionPolicy": "ccPriorityWithWarning",
                     "missingSelectionPolicy": "automaticAllocation",
@@ -322,7 +322,7 @@ Request: `F0 7D 00 05 00 F7`. Response:
 F0 7D 00 05 01 01 01 <channel> <gm_program> <type_id> F7
 ```
 
-Nylon guitar example (GM 24 = `0x18`, type `0x04`): `F0 7D 00 05 01 01 01 01 18 04 F7`.
+Violin example (GM 40 = `0x28`, bowed-string type `0x05`): `F0 7D 00 05 01 01 01 01 28 05 F7`.
 
 ### 3.5 Block 6 — Capabilities
 
@@ -354,8 +354,8 @@ string`. The **union** of all playable notes is built (bounded 0–127).
 #### Polyphony (§6)
 
 `polyphony = number of active and functional strings` by default, or a custom
-value (`polyphonyOverride ≥ 0`). Examples: 6 strings with individual picks → 6;
-6 strings with constraints limiting to 4 → configured to 4.
+value (`polyphonyOverride ≥ 0`). Examples: 4 strings, one bow motor each → 4;
+4 strings but a shared mechanical constraint limiting to 3 → configured to 3.
 
 #### Announced controllers (§7)
 
@@ -363,8 +363,8 @@ Only the CCs that are **actually enabled** are announced, sorted:
 
 | CC | Function | Condition |
 | -: | -------- | --------- |
-| 7 | volume | always |
-| 11 | expression | always |
+| 7 | volume — **modulates a held note** | always |
+| 11 | expression — **modulates a held note** | always |
 | String CC | string selection | if `selector.enabled` (configured number, e.g. 24) |
 | Fret CC | fret selection | if `selector.enabled` (e.g. 25) |
 | 64 | sustain | if `midi.sustainPedal` |
@@ -372,6 +372,12 @@ Only the CCs that are **actually enabled** are announced, sorted:
 | 123 | all notes off | always |
 
 A disabled CC is not announced.
+
+Because a bowed note **sustains continuously**, CC7 (volume) and CC11
+(expression) are live modulators here, not just attack-time gains: received while
+a note is sounding, they re-drive the bow-motor speed and the bowPress contact
+force, giving true crescendo/decrescendo on a held note. This is a headline
+feature of the bowed instrument and both CCs are therefore always announced.
 
 ### 3.6 Block 7 — String configuration
 

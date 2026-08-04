@@ -1,12 +1,12 @@
 /*
- * api.js — REST + WebSocket client for the Stepper-Plucked-Strings-GMB
+ * api.js — REST + WebSocket client for the Servo-bowed-strings-GMB
  * web interface, with a self-contained MOCK mode.
  *
  * The page is served from the ESP32 over LittleFS, so this file talks to the
  * firmware REST API (see endpoint list in README.md). When no backend is
  * reachable — typically when index.html is opened directly from disk — every
  * call transparently falls back to an in-memory mock so the whole UI stays
- * usable standalone with realistic sample data (a 4-string GCEA ukulele).
+ * usable standalone with realistic sample data (a 4-string violin).
  *
  * Everything is exposed on the global GMB namespace; no ES modules / no build
  * step, so it works from file:// where module imports would be blocked.
@@ -128,17 +128,20 @@
   // match firmware PinAssignment.signal ("STEP1", "HOME3", "SDA"...).
   // ---------------------------------------------------------------------------
   var RECOMMENDED = {
-    STEP: [4, 5, 6, 7, 15, 16],
-    DIR: [17, 18, 8, 9, 10, 11],
-    HOME: [12, 13, 14, 21, 38, 39],
-    SDA: 40, SCL: 41, ENABLE: 42, SERVO_OE: 47
+    STEP: [4, 5, 6, 7],
+    DIR: [17, 18, 8, 9],
+    HOME: [12, 13, 14, 21],
+    BOW_PWM: [1, 2, 10, 11],
+    BOW_DIR: [15, 16, 38, 39],
+    SDA: 40, SCL: 41, ENABLE: 42, SERVO_OE: 47, BOW_EN: 33
   };
   GMB.RECOMMENDED = RECOMMENDED;
 
   // Which capability a signal kind needs (mirrors BoardProfile::candidatesFor).
   var SIGNAL_KIND = {
     step: 'step', dir: 'dir', enable: 'enable', home: 'home', limit: 'limit',
-    diag: 'diag', sda: 'i2cSda', scl: 'i2cScl', servoOe: 'servoOe', servo: 'servo'
+    diag: 'diag', sda: 'i2cSda', scl: 'i2cScl', servoOe: 'servoOe', servo: 'servo',
+    bowPwm: 'bowPwm', bowDir: 'bowDir', bowEnable: 'bowEnable'
   };
   GMB.SIGNAL_KIND = SIGNAL_KIND;
 
@@ -150,7 +153,10 @@
       case 'dir':
       case 'enable':
       case 'servo':    // direct-GPIO servo: LEDC 50 Hz PWM — any output pin
-      case 'servoOe': return p.output;
+      case 'servoOe':
+      case 'bowPwm':   // bow H-bridge speed: LEDC PWM — any output pin
+      case 'bowDir':   // bow H-bridge direction: plain output
+      case 'bowEnable': return p.output;
       case 'home':
       case 'limit': return p.input && p.interrupt;
       case 'diag': return p.input;
@@ -161,13 +167,13 @@
   };
 
   // ---------------------------------------------------------------------------
-  // Sample profile — a 4-string GCEA ukulele (reentrant tuning G4 C4 E4 A4).
+  // Sample profile — a 4-string violin (standard tuning G3 D4 A4 E5).
   // Matches the JSON schema in the project brief exactly.
   // ---------------------------------------------------------------------------
-  function ukuleleString(openNote) {
+  function violinString(openNote) {
     return {
       enabled: true,
-      openNote: openNote, maxFret: 12, scaleLengthMm: 330,
+      openNote: openNote, maxFret: 19, scaleLengthMm: 328,
       transmission: 'beltGt2', stepsPerRevolution: 200, microsteps: 16,
       pulleyTeeth: 20, beltPitchMm: 2, leadPerRevolutionMm: 8, customStepsPerMm: 80,
       invertDirection: false, minPositionMm: 0, maxPositionMm: 300, fretOffsetMm: 0,
@@ -199,15 +205,31 @@
       travelMs: opts.travelMs || 120,
       settleMs: opts.settleMs || 30,
       disableAtRest: opts.disableAtRest !== false,
-      // Strum / pluck stroke shaping (matches firmware ServoConfig).
-      engageDelayMs: opts.engageDelayMs || 0,
-      alternateDirection: !!opts.alternateDirection,
-      activeAltUs: opts.activeAltUs || 0,
-      strokeMs: opts.strokeMs || 0,
-      minStrikeUs: opts.minStrikeUs || 0
+      // Minimum contact-force pulse for the bowPress descent servo (matches
+      // firmware ServoConfig.minForceUs); 0 = off.
+      minForceUs: opts.minForceUs || 0
     };
   }
   GMB.servoDefaults = servo;
+
+  // A single bow-motor entry (matches firmware BowConfig): the per-string
+  // H-bridge that spins the bow wheel (BOW_PWM speed / BOW_DIR direction, one
+  // shared BOW_EN). One entry per string.
+  function bow(stringIndex, opts) {
+    opts = opts || {};
+    return {
+      enabled: opts.enabled !== false,
+      stringIndex: stringIndex === undefined ? -1 : stringIndex,
+      minDutyPct: opts.minDutyPct === undefined ? 25 : opts.minDutyPct,
+      maxDutyPct: opts.maxDutyPct === undefined ? 100 : opts.maxDutyPct,
+      pwmFreqHz: opts.pwmFreqHz === undefined ? 20000 : opts.pwmFreqHz,
+      spinUpMs: opts.spinUpMs === undefined ? 40 : opts.spinUpMs,
+      spinDownMs: opts.spinDownMs === undefined ? 60 : opts.spinDownMs,
+      reverse: !!opts.reverse,
+      alternate: !!opts.alternate
+    };
+  }
+  GMB.bowDefaults = bow;
 
   // Theoretical fret position (spec 14.2), measured from the nut (fret 0 = 0):
   // scale·(1−2^(−fret/12)). The per-string fret offset (nut → FDC) is applied by
@@ -224,10 +246,10 @@
 
   function sampleProfile() {
     return {
-      project: 'Stepper-Plucked-Strings-GMB', profileVersion: 1, capabilitiesRevision: 7,
+      project: 'Servo-bowed-strings-GMB', profileVersion: 1, capabilitiesRevision: 7,
       instrument: {
-        name: 'Ukulele GCEA', description: '4-string soprano ukulele',
-        stringCount: 4, type: 'ukulele', gmProgram: 24, typeId: 4,
+        name: 'Violin GDAE', description: '4-string violin',
+        stringCount: 4, type: 'violin', gmProgram: 40, typeId: 5,
         capo: 0, transpose: 0
       },
       board: { profile: 'esp32-s3-devkitc-1', reserveUsb: true, automaticPinAssignment: true },
@@ -243,40 +265,42 @@
       ],
       network: {
         mode: 'accessPoint', ssid: '', hostname: 'gmb-instrument',
-        apSsid: 'Stepper-Plucked-Strings-GMB', staticIp: false
+        apSsid: 'Servo-bowed-strings-GMB', staticIp: false
       },
       midi: {
         globalChannel: 0, omni: false, transpose: 0, chordWindowMs: 3,
         velocityCurve: 'linear', sustainPedal: true, sustainCc: 64,
         saturationStrategy: 'priorityLow',
-        noteExecutionDelayMs: 0, fingerLeadMs: 0, strumLeadMs: 0
+        noteExecutionDelayMs: 0, fingerLeadMs: 0, bowLeadMs: 0
       },
       stringFretSelection: {
         enabled: true, mode: 'hybrid', preset: 'general-midi-boop', perMidiChannel: true,
         selectionTimeoutMs: 100, prepareOnCompleteSelection: true, queueDepth: 32,
         string: { ccNumber: 20, minimum: 1, maximum: 4, offset: 0, numbering: 'oneBased',
           reverseOrder: false, mapping: [0, 1, 2, 3] },
-        fret: { ccNumber: 21, minimum: 0, maximum: 12, offset: 0, invalidValuePolicy: 'automaticFallback' },
+        fret: { ccNumber: 21, minimum: 0, maximum: 19, offset: 0, invalidValuePolicy: 'automaticFallback' },
         validation: {
           notePositionPolicy: 'ccPriorityWithWarning',
           missingSelectionPolicy: 'automaticAllocation',
           expiredSelectionPolicy: 'automaticAllocation'
         }
       },
-      // Ukulele GCEA: physical order low->high used by GMB = G4(67) C4(60) E4(64) A4(69)
-      strings: [ukuleleString(67), ukuleleString(60), ukuleleString(64), ukuleleString(69)],
-      // A representative mix: one finger + one pluck per string on PCA board 0
-      // (channels 0–3 fingers, 6–9 plucks — the recommended layout).
+      // Violin GDAE: physical order low->high used by GMB = G3(55) D4(62) A4(69) E5(76)
+      strings: [violinString(55), violinString(62), violinString(69), violinString(76)],
+      // A representative layout: one finger + one bowPress (bow descent / contact
+      // force) servo per string on PCA board 0 (channels 0–3 fingers, 6–9 bow-press).
       servos: [
         servo('finger', 0, { channel: 0 }),
         servo('finger', 1, { channel: 1 }),
         servo('finger', 2, { channel: 2 }),
         servo('finger', 3, { channel: 3 }),
-        servo('pluck', 0, { channel: 6, activeUs: 1700, travelMs: 90, settleMs: 20 }),
-        servo('pluck', 1, { channel: 7, activeUs: 1700, travelMs: 90, settleMs: 20 }),
-        servo('pluck', 2, { channel: 8, activeUs: 1700, travelMs: 90, settleMs: 20 }),
-        servo('pluck', 3, { channel: 9, activeUs: 1700, travelMs: 90, settleMs: 20 })
-      ]
+        servo('bowPress', 0, { channel: 6, travelMs: 90, settleMs: 20 }),
+        servo('bowPress', 1, { channel: 7, travelMs: 90, settleMs: 20 }),
+        servo('bowPress', 2, { channel: 8, travelMs: 90, settleMs: 20 }),
+        servo('bowPress', 3, { channel: 9, travelMs: 90, settleMs: 20 })
+      ],
+      // Per-string bow motors (H-bridge): BOW_PWM<n>/BOW_DIR<n> + shared BOW_EN.
+      bows: [bow(0), bow(1), bow(2), bow(3)]
     };
   }
   GMB.sampleProfile = sampleProfile;
@@ -286,6 +310,14 @@
     if (n === null || n === undefined || n < 0) return '--';
     return NOTE_NAMES[n % 12] + (Math.floor(n / 12) - 1);
   };
+
+  // Instrument typeId -> human label for the SysEx decode view (0x05 = bowed).
+  var TYPE_NAME = { 4: 'plucked string', 5: 'bowed string' };
+  function typeIdLabel(id) {
+    id = id || 0;
+    var hx = '0x0' + id.toString(16);
+    return TYPE_NAME[id] ? (hx + ' (' + TYPE_NAME[id] + ')') : hx;
+  }
 
   // Derive read-only capabilities from a profile (SysEx spec 5 / 6 / 17).
   GMB.computeCapabilities = function (p) {
@@ -334,7 +366,7 @@
     var p = MOCK.profile;
     var caps = GMB.computeCapabilities(p);
     return {
-      state: 'READY',
+      state: 'ready',
       wifi: { mode: p.network.mode, ssid: p.network.mode === 'station' ? p.network.ssid : p.network.apSsid,
         ip: p.network.mode === 'station' ? '192.168.1.42' : '192.168.4.1', rssi: -54, connected: true },
       midiSource: 'WebSocket MIDI (Wi-Fi)',
@@ -347,11 +379,11 @@
       voltages: [{ name: '24V motor', v: 24.1 }, { name: '5V servo', v: 5.02 }],
       strings: p.strings.map(function (s, i) {
         return {
-          index: i, state: 'IDLE',
+          index: i, state: 'idle',
           note: null, fret: null,
           positionMm: 0, targetMm: 0, distanceMm: 0,
           home: true, limit: false,
-          finger: 'up', plectrum: 'rest', lastFault: 'none',
+          finger: 'up', bow: 'up', lastFault: 'none',
           openNote: s.openNote
         };
       })
@@ -377,8 +409,8 @@
     profile: sampleProfile(),
     slots: [
       sampleProfile(),
-      demoProfile('Guitar Standard', 'guitar'),
-      demoProfile('Bass EADG', 'bass'),
+      demoProfile('Viola CGDA', 'viola'),
+      demoProfile('Cello CGDA', 'cello'),
       null, null, null, null, null
     ],
     startupSlot: 0
@@ -411,6 +443,15 @@
     }
     if (req.globalEnable !== false) pins.push({ signal: 'ENABLE', kind: 'enable', gpio: RECOMMENDED.ENABLE });
     if (req.servoSafetyOe !== false) pins.push({ signal: 'SERVO_OE', kind: 'servoOe', gpio: RECOMMENDED.SERVO_OE });
+    // Per-string bow H-bridge lines (BOW_PWM speed / BOW_DIR direction) plus one
+    // shared BOW_EN that neutralises every bridge at once.
+    if (req.bowMotors !== false) {
+      for (var b = 0; b < n; b++) {
+        pins.push({ signal: 'BOW_PWM' + (b + 1), kind: 'bowPwm', gpio: RECOMMENDED.BOW_PWM[b] });
+        pins.push({ signal: 'BOW_DIR' + (b + 1), kind: 'bowDir', gpio: RECOMMENDED.BOW_DIR[b] });
+      }
+      pins.push({ signal: 'BOW_EN', kind: 'bowEnable', gpio: RECOMMENDED.BOW_EN });
+    }
     return { pins: pins, errors: [] };
   }
 
@@ -559,7 +600,7 @@
         }
         case 'descriptor':
           return { Channel: resp[7] + 1, 'GM program': resp[8],
-            'Type id': '0x0' + (resp[9] || 0).toString(16) };
+            'Type id': typeIdLabel(resp[9]) };
         case 'capabilities': {
           var ch = resp[6], noteMode = resp[10], noteMin = resp[11], noteMax = resp[12],
             poly = resp[13], ccLen = resp[15];
@@ -860,7 +901,7 @@
       { step: 'Axis moving', detail: 'string ' + payload.string + ' -> fret ' + payload.fret },
       { step: 'Position reached', detail: 'ok' },
       { step: 'Finger pressed', detail: payload.fret === 0 ? 'skipped (open string)' : 'ok' },
-      { step: 'String plucked', detail: 'velocity ' + payload.velocity }
+      { step: 'String bowed', detail: 'velocity ' + payload.velocity }
     ];
     // Also inject the events into the mock MIDI stream so the monitor shows them.
     injectMidi(payload);

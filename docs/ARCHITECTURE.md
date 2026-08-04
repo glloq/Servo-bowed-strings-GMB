@@ -1,4 +1,4 @@
-# Architecture — Stepper-Plucked-Strings-GMB
+# Architecture — Servo-bowed-strings-GMB
 
 > Reference document: [`SPEC_INDEX.md`](SPEC_INDEX.md) (source: `SPECIFICATION.md` §23, §24).
 > Related documents: [`PIN_CONFIGURATION.md`](PIN_CONFIGURATION.md) · [`MIDI_PROTOCOL.md`](MIDI_PROTOCOL.md) · [`WEB_INTERFACE.md`](WEB_INTERFACE.md) · [`CALIBRATION.md`](CALIBRATION.md) · [`SAFETY.md`](SAFETY.md)
@@ -25,21 +25,24 @@ Consequences:
 
 * **Pure core** (`firmware/src/core/`) — business logic testable on a PC: board
   profiles, pin management, string/fret selection, note allocation, per-string
-  state machine, motor geometry, homing, GMB capabilities/SysEx, safety. No
-  direct hardware access.
+  state machine, motor geometry, homing, bow drive configuration, GMB
+  capabilities/SysEx, safety. No direct hardware access.
 * **Platform adapters** (`firmware/src/platform/esp32/`) — concrete
   implementations that connect the core to the ESP32-S3 hardware:
   `StepperBank` generates the steps via the **FastAccelStepper hardware engine**
   (RMT/MCPWM + timer), thus **outside `loop()`** — the core's `MotionPlanner`
   remains the reference trapezoidal model tested on a PC; `ServoBank` drives the
-  PCA9685 **and** the servos on direct GPIO (14-bit LEDC); `Net` (non-blocking
-  Wi-Fi), `WebApi` (REST + WebSocket), `MidiWifi` (transport), `ProfileStorage`
-  (LittleFS + NVS for secrets). These layers consume the core without modifying
-  it.
-* **Native tests** (`firmware/test/`) — 86 unit tests compiled and run
-  with `g++ -std=c++17` via `firmware/test/Makefile`, covering the 8 modules of
-  the core (`test_board`, `test_selector`, `test_allocator`, `test_motion`,
-  `test_string_fsm`, `test_profile`, `test_sysex`, + `test_main`).
+  PCA9685 **and** the servos on direct GPIO (14-bit LEDC); `BowBank` drives the
+  per-string DC bow motors through their H-bridges (LEDC PWM speed + DIR
+  direction + one shared ENABLE); `Net` (non-blocking Wi-Fi), `WebApi` (REST +
+  WebSocket), `MidiWifi` (transport), `ProfileStorage` (LittleFS + NVS for
+  secrets). These layers consume the core without modifying it.
+* **Native tests** (`firmware/test/`) — 152 unit tests compiled and run
+  with `g++ -std=c++17` via `firmware/test/Makefile`, covering the core modules
+  (`test_board`, `test_selector`, `test_allocator`, `test_motion`, `test_planner`,
+  `test_string_fsm`, `test_profile`, `test_servos`, `test_sysex`,
+  `test_midiparser`, `test_debounce`, `test_integration`, `test_audit`, +
+  `test_main`).
 
 ```bash
 cd firmware/test && make        # compile the core + the tests, then run them
@@ -86,12 +89,13 @@ firmware/                        Specification §23             Implemented (cor
 │   ├── MotionPlanner            trapezoidal profile (accel)   core/motion/MotionPlanner.{h,cpp}
 │   └── HomingController         non-blocking homing           core/motion/HomingController.{h,cpp}
 ├── actuators/
-│   ├── ServoManager             PCA9685                       ServoConfig (core/configuration)
+│   ├── ServoManager             PCA9685 / direct GPIO         ServoConfig (core/configuration)
 │   ├── FingerActuator           finger servo                  ServoConfig function="finger"
-│   ├── PluckActuator            pluck servo                   ServoConfig function="pluck"
-│   └── DamperActuator           damper                        ServoConfig function="damper"
+│   ├── BowPressActuator         bow descent / contact force   ServoConfig function="bowPress"
+│   └── BowBank                  H-bridge DC bow motors        BowConfig (core/configuration) [adapter]
 ├── configuration/
 │   ├── Profile                  profile (source of truth)     core/configuration/Profile.{h,cpp}
+│   ├── BowConfig                per-string bow drive          Profile.h (struct BowConfig)
 │   ├── ProfileValidator         validation                    core/configuration/ProfileValidator.{h,cpp}
 │   └── ProfileStorage           NVS persistence               (adapter, upcoming)
 ├── safety/
@@ -117,6 +121,11 @@ Correspondence notes:
   `faults()`).
 * The `gmb/` module does not appear explicitly in the §23 tree: it realizes
   the [`SYSEX_CAPABILITIES.md`](SPEC_INDEX.md) specification.
+* The **bow excitation** is new to the bowed instrument: the per-string
+  `BowConfig` (speed, ramps, direction) lives in `Profile.h`, and the `BowBank`
+  platform adapter turns each string's motor through its H-bridge (PWM speed +
+  DIR direction + one shared ENABLE). It replaces the plucking actuators of the
+  former plucked-string design.
 * Entries marked "adapter, upcoming" are platform layers or modules from later
   phases that will consume the core.
 
@@ -152,12 +161,13 @@ NoteAllocator               (chooses the best string, groups chords,
         ▼
 StringController[c]          (non-blocking state machine, 1 per string)
    DISABLED → HOMING → IDLE → RELEASING_FINGER → MOVING →
-   PRESSING_FINGER → SETTLING → READY_TO_PLUCK → PLUCKING →
-   SUSTAINING → DAMPING (→ IDLE)     |  CANCELLING  |  FAULT
+   PRESSING_FINGER → SETTLING → READY_TO_BOW → BOWING →
+   STOPPING (→ IDLE)     |  CANCELLING  |  FAULT
         │                                   │
         ▼                                   ▼
-StepperAxis / HomingController        ServoManager (PCA9685)
-   (mm ↔ steps, fret positions)          finger / pluck / damper
+StepperAxis / HomingController        ServoManager + BowBank
+   (mm ↔ steps, fret positions)       finger + bowPress servo,
+                                       bow motor + descent servo (continuous)
 ```
 
 Key points of the flow:
@@ -171,11 +181,16 @@ Key points of the flow:
   [`MIDI_PROTOCOL.md`](MIDI_PROTOCOL.md).
 * **Command identifier.** Each `noteOn(fret)` returns a fresh `commandId`;
   any deferred action tagged with an old id is ignored. This prevents a
-  pluck after a Note Off, a delayed press, the execution of a stale position,
+  bow start after a Note Off, a delayed press, the execution of a stale position,
   or an attack after a panic (specification §16).
 * **Reliable Note Off.** The actual assignment of a Note On is memorized
   (`ActiveNote`) to release the correct string, even in a chord or with repeated
   notes.
+* **Continuous excitation.** A bowed note is not a one-shot strike: reaching the
+  fret lowers the bow and spins the motor, and the string keeps sounding until
+  Note Off stops the motor and lifts the bow. Velocity scales both the bow-motor
+  PWM duty and the bowPress contact force, and CC7/CC11 re-drive both live on a
+  held note for crescendo/decrescendo.
 
 ---
 
@@ -228,7 +243,8 @@ in [`MIDI_PROTOCOL.md`](MIDI_PROTOCOL.md#3-protocole-sysex-gmb).
 | `selector` | `SelectorConfig` | string/fret selection (CC20/CC21, mode, timeout, FIFO…) |
 | `strings` | `vector<AxisConfig>` | geometry/motor per string |
 | `homing` | `vector<HomingConfig>` | homing per axis |
-| `servos` | `vector<ServoConfig>` | servos (finger/pluck/damper/aux) |
+| `servos` | `vector<ServoConfig>` | servos (finger/bowPress/aux) |
+| `bows` | `vector<BowConfig>` | per-string DC bow motor (H-bridge: speed, ramps, direction) |
 | `capabilitiesRevision` | `uint32_t` | revision counter (Block 8 notification) |
 
 `Profile::instrumentView()` derives from it an `InstrumentView` shared by the
@@ -240,10 +256,10 @@ string/fret selector and the capabilities generator.
 
 | Phase | Objective | Key deliverables |
 | ----- | ----- | -------------- |
-| **1 — Single-string prototype** | ESP32-S3, Wi-Fi, minimal UI, 1 motor, 1 HOME sensor, 1 finger servo, 1 pluck servo, Wi-Fi MIDI test, complete state machine, panic | state machine, homing, panic |
-| **2 — Intuitive configuration** | wizard, board profile, automatic GPIO assignment, conflict validation, motor/servo calibration, JSON import/export | `BoardProfile`, `PinManager`, `Profile`, wizard |
-| **3 — Multi-string** | 4 then 6 axes, PCA9685, parallel homing, note allocation, chords, per-string diagnostics | `NoteAllocator`, parallel homing |
-| **4 — Advanced playing** | tremolo, damping, sustain pedal, velocity curves, saturation strategies | curves |
+| **1 — Single-string prototype** | ESP32-S3, Wi-Fi, minimal UI, 1 motor, 1 HOME sensor, 1 finger servo, 1 bow motor (H-bridge) + bow-press servo, Wi-Fi MIDI test, complete state machine, panic | state machine, homing, panic |
+| **2 — Intuitive configuration** | wizard, board profile, automatic GPIO assignment, conflict validation, motor/servo/bow calibration, JSON import/export | `BoardProfile`, `PinManager`, `Profile`, wizard |
+| **3 — Multi-string** | 2 then 4 axes, PCA9685, parallel homing, note allocation, chords, per-string diagnostics | `NoteAllocator`, parallel homing |
+| **4 — Advanced playing** | continuous bowing, crescendo/decrescendo via CC7/CC11, down-bow/up-bow alternation, sustain pedal, velocity curves, saturation strategies | bow dynamics, curves |
 | **5 — Dedicated hardware** | schematic, PCB, protections, connectors, hardware shutdown, electrical validation, wiring documentation | `hardware/` |
 | **6 — Future communications** | BLE MIDI, USB MIDI, MIDI DIN, wired links | new transports reusing `MidiEvent` |
 

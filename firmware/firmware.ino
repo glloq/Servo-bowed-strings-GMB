@@ -1,5 +1,5 @@
 /*
- * Stepper-Plucked-Strings-GMB — Arduino IDE entry point.
+ * Servo-bowed-strings-GMB — Arduino IDE entry point.
  *
  * This sketch is intentionally almost empty: setup() and loop() live in
  * src/main.cpp, and the whole firmware (pure core + ESP32 adapters) sits under

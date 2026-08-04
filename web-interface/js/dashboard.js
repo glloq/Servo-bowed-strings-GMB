@@ -4,7 +4,7 @@
  * Shows the general state, Wi-Fi, MIDI source, active profile, strings-ready
  * count, notes playing, active faults, temperatures/voltages and a big STOP
  * (panic) button; plus a per-string table (state, note, fret, motor position,
- * target, distance, HOME/LIMIT, finger, plectrum, last fault). Live values
+ * target, distance, HOME/LIMIT, finger, bow, last fault). Live values
  * come from the /ws/status WebSocket (mock pump when standalone).
  */
 (function (global) {
@@ -61,14 +61,14 @@
       capabilitiesRevision: p.capabilitiesRevision,
       strings: p.strings.map(function (s, i) {
         return { index: i, state: '—', note: null, fret: null, positionMm: 0, targetMm: 0,
-          distanceMm: 0, home: false, limit: false, finger: '—', plectrum: '—', lastFault: 'none', openNote: s.openNote };
+          distanceMm: 0, home: false, limit: false, finger: '—', bow: '—', lastFault: 'none', openNote: s.openNote };
       })
     };
   }
 
   function buildHead() {
     var cols = ['#', 'Open', 'State', 'Note', 'Fret', 'Pos (mm)', 'Target', 'Dist',
-      'HOME', 'LIMIT', 'Finger', 'Plectrum', 'Last fault'];
+      'HOME', 'LIMIT', 'Finger', 'Bow', 'Last fault'];
     return h('thead', h('tr', cols.map(function (c) { return h('th', c); })));
   }
 
@@ -121,7 +121,7 @@
       tb.appendChild(h('tr', [
         h('td', String(s.index + 1)),
         h('td', GMB.noteName(s.openNote)),
-        h('td', h('span.pill.mini.' + stateClass(s.state), s.state)),
+        h('td', h('span.pill.mini.' + stateClass(s.state), stateLabel(s.state))),
         h('td', s.note === null ? '—' : GMB.noteName(s.note)),
         h('td', s.fret === null ? '—' : String(s.fret)),
         h('td', fmt(s.positionMm)),
@@ -130,7 +130,7 @@
         h('td', dot(s.home)),
         h('td', dot(s.limit)),
         h('td', s.finger),
-        h('td', s.plectrum),
+        h('td', bowCell(s.bow)),
         h('td', s.lastFault === 'none' ? h('span.muted', 'none') : h('span.pill.mini.error', s.lastFault))
       ]));
     });
@@ -138,7 +138,27 @@
 
   function fmt(v) { return (v === null || v === undefined) ? '—' : Number(v).toFixed(1); }
   function dot(on) { return h('span.leddot' + (on ? '.on' : '')); }
-  function stateBadge(s) { return h('span.pill.' + stateClass(s), s); }
+  function stateBadge(s) { return h('span.pill.' + stateClass(s), stateLabel(s)); }
+
+  // Friendly labels for the per-string states reported by the firmware
+  // (idle/homing/releasing/moving/pressing/settling/ready/bowing/stopping/
+  // cancelling/fault/disabled). Unknown values pass through unchanged.
+  var STATE_LABEL = {
+    idle: 'Idle', homing: 'Homing', releasing: 'Releasing', moving: 'Moving',
+    pressing: 'Pressing', settling: 'Settling', ready: 'Ready', bowing: 'Bowing',
+    stopping: 'Stopping', cancelling: 'Cancelling', fault: 'Fault', disabled: 'Disabled'
+  };
+  function stateLabel(s) {
+    if (s === null || s === undefined || s === '—') return '—';
+    return STATE_LABEL[String(s).toLowerCase()] || String(s);
+  }
+
+  // Bow indicator: highlighted while the bow is down and turning ("bowing"),
+  // muted otherwise ("up" / unknown).
+  function bowCell(v) {
+    if (v === 'bowing') return h('span.pill.mini.ok', 'bowing');
+    return h('span.muted', (v === null || v === undefined) ? '—' : v);
+  }
   function stateClass(s) {
     var u = String(s).toUpperCase();
     if (u === 'READY' || u === 'IDLE') return 'ok';

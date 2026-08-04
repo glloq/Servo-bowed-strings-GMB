@@ -1,4 +1,4 @@
-# Safety — Stepper-Plucked-Strings-GMB
+# Safety — Servo-bowed-strings-GMB
 
 > Sources: `SPECIFICATION.md` §21, §22 · Code: `core/safety/SafetyManager.{h,cpp}`.
 > Related documents: [`ARCHITECTURE.md`](ARCHITECTURE.md) · [`CALIBRATION.md`](CALIBRATION.md) · [`WEB_INTERFACE.md`](WEB_INTERFACE.md).
@@ -27,6 +27,7 @@ At power-on, `boot()` places the system into `PowerOnSafe`:
 ```text
 drivers disabled
 servos neutralised
+bow motors stopped, shared BOW_EN cut
 auxiliary outputs cut
 MIDI queues empty
 profile verified
@@ -52,22 +53,27 @@ successful homing**, so that no axis moves from an unknown physical position:
 Boot     : PowerOnSafe — profile loaded and validated, drivers OFF, servos at rest
    │        (if the profile is invalid, it stays in Boot: no movement)
    ▼
-Homing   : drivers ON; each axis runs its HomingController (non-blocking,
-   │        in parallel). The origin is anchored on the HOME sensor (0 mm).
-   │        A faulty axis is disabled without blocking the others.
+Homing   : drivers ON, bow motors still DISABLED (shared BOW_EN held cut);
+   │        each axis runs its HomingController (non-blocking, in parallel). The
+   │        origin is anchored on the HOME sensor (0 mm). A faulty axis is
+   │        disabled without blocking the others.
    ▼
-Ready    : all axes homed → arm() → MIDI notes are played.
+Ready    : all axes homed → arm() → BOW_EN enabled → MIDI notes are played.
 ```
 
 During `Boot` and `Homing`, `Note On` messages are not played (only SysEx
-requests are processed). A mechanical configuration change from the Web
-interface triggers a new homing before playback resumes.
+requests are processed) and **the bow motors stay disabled** — `BOW_EN` is only
+asserted once the instrument is armed (`Ready`), so a bow can never spin against
+a string whose position is still unknown. A mechanical configuration change from
+the Web interface triggers a new homing (bows disabled again) before playback
+resumes.
 
 ### Hardware emergency stop and limit switches
 
 * **Hardware E-stop**: if an `ESTOP` pin is assigned (active low), `loop()`
   reads it on every pass and immediately triggers a panic (drivers cut off,
-  servos neutralized). Without an assigned `ESTOP` pin, only the software panic
+  servos neutralized, **every bow motor stopped and the shared `BOW_EN`
+  cut**). Without an assigned `ESTOP` pin, only the software panic
   (Web STOP button / CC120/CC123) is available.
 * **`LIMIT` switches**: an active `LIMIT` during a movement causes an
   **immediate stop** of the axis concerned (not a deceleration), invalidates its
@@ -130,19 +136,24 @@ the [`README`](../README.md).
 
 ---
 
-## 2. Hardware emergency stop — the PCA9685 /OE (§21.2)
+## 2. Hardware emergency stop — the PCA9685 /OE and the bow ENABLE (§21.2)
 
 A **hardware** stop must be able to:
 
-* disable the stepper drivers;
+* disable the stepper drivers (their shared `ENABLE` line);
 * disable the PCA9685 via its `/OE` pin (immediate neutralization of all servos,
   independently of the firmware);
+* **cut the shared bow `BOW_EN`** so every H-bridge — and therefore every bow
+  motor — is disabled at once, independently of the firmware;
 * neutralize the auxiliary outputs;
 * **keep the ESP32 powered** (for logging and controlled recovery).
 
 The PCA9685 `/OE` output is wired to a safety pin (GPIO47 in the recommended
-DevKitC-1 profile — see [`PIN_CONFIGURATION.md`](PIN_CONFIGURATION.md)).
-`emergencyStop(nowMs)` locks the `EmergencyStop` state and records the cause.
+DevKitC-1 profile — see [`PIN_CONFIGURATION.md`](PIN_CONFIGURATION.md)), and the
+bow H-bridge `BOW_EN` (GPIO33) is wired into the **same hardware safety cut**,
+alongside the driver `ENABLE` and the PCA9685 `/OE`, so one E-stop kills the
+steppers, the servos and the bow motors together. `emergencyStop(nowMs)` locks
+the `EmergencyStop` state and records the cause.
 
 ---
 
@@ -153,14 +164,14 @@ firmware must:
 
 * flush the MIDI queue;
 * cancel all movements;
-* cancel all plucks;
-* lift the fingers;
+* stop every bow motor and cut the shared `BOW_EN`;
+* lift the bows and the fingers;
 * neutralize the servos;
-* disable the motors;
+* disable the stepper motors;
 * record the cause.
 
 The `StringController` command-identifier mechanism guarantees that no deferred
-attack is executed after a panic (see [`ARCHITECTURE.md`](ARCHITECTURE.md)
+bow attack is executed after a panic (see [`ARCHITECTURE.md`](ARCHITECTURE.md)
 §3 and `SPECIFICATION.md` §16). `reset()` returns to `PowerOnSafe` and requires
 a re-arm.
 
@@ -180,7 +191,10 @@ Configurable behavior (`WifiLossBehavior`):
 | `IdleKeepMotors` (3) | return to idle without disabling the motors |
 
 Default behavior in detail: cancellation of pending commands, controlled
-release, return to the READY state.
+release, return to the READY state. Releasing a sounding note **lifts its bow
+and stops its motor**, so no bow keeps sawing an unattended string; only
+`IdleKeepMotors` leaves the stepper drivers energised (the bow motors are stopped
+regardless, since no note is sounding in idle).
 
 ---
 
@@ -207,17 +221,26 @@ Recommended rails:
 | Rail | Usage |
 | ---- | ----- |
 | 24 V | stepper motors |
+| motor rail | bow DC motors (through the H-bridges) |
 | 5 to 7.4 V | servomotors |
 | 5 V | logic |
 | 3.3 V | ESP32-S3 |
 
+The bow DC motors run from a **separate motor rail through their H-bridges**,
+exactly like the stepper drivers run from the 24 V rail — never from the ESP32
+regulator or the logic rail. Size the rail to the combined stall current of the
+bow motors and give it its own fuse.
+
 Requirements:
 
 * **separate** servo power supply;
-* motor fuse; servo fuse;
+* stepper-motor fuse; bow-motor fuse; servo fuse;
 * reverse-polarity protection;
-* TVS on the motor rail;
-* capacitors near the drivers; a reserve capacitor near the PCA9685;
+* TVS on the motor rail(s);
+* capacitors near the drivers and near the bow H-bridges; a reserve capacitor
+  near the PCA9685;
 * structured common ground;
 * lockable connectors;
-* **no servo powered from the ESP32 regulator**.
+* the bow H-bridge `BOW_EN` wired into the hardware safety cut, alongside the
+  driver `ENABLE` and the PCA9685 `/OE` (§21.2);
+* **no servo or bow motor powered from the ESP32 regulator**.
