@@ -69,15 +69,19 @@
     return GMB.button(label, function () { fn(src); }, 'ghost');
   }
 
+  // Bowed-string presets (max 4 strings). MIDI convention: C4 = 60.
   var TUNINGS = {
-    ukulele: { notes: [67, 60, 64, 69], maxFret: 12 },       // G C E A
-    guitar: { notes: [40, 45, 50, 55, 59, 64], maxFret: 20 }, // E A D G B E
-    bass: { notes: [28, 33, 38, 43], maxFret: 20 },           // E A D G
-    mandolin: { notes: [55, 62, 69, 76], maxFret: 18 },
-    banjo: { notes: [62, 67, 71, 62], maxFret: 22 }
+    violin: { notes: [55, 62, 69, 76], maxFret: 19 },      // G3 D4 A4 E5
+    viola: { notes: [48, 55, 62, 69], maxFret: 19 },       // C3 G3 D4 A4
+    cello: { notes: [36, 43, 50, 57], maxFret: 24 },       // C2 G2 D3 A3
+    doubleBass: { notes: [28, 33, 38, 43], maxFret: 24 }   // E1 A1 D2 G2
   };
-  var GM_PROGRAM = { ukulele: 24, guitar: 24, bass: 33, mandolin: 25, banjo: 105 };
-  var TYPE_ID = { ukulele: 0x04, guitar: 0x04, bass: 0x05, mandolin: 0x04, banjo: 0x06 };
+  // Instrument type -> select label.
+  var TYPE_LABEL = { violin: 'Violin', viola: 'Viola', cello: 'Cello', doubleBass: 'Double bass' };
+  // GM programs: violin 40 / viola 41 / cello 42 / contrabass 43.
+  var GM_PROGRAM = { violin: 40, viola: 41, cello: 42, doubleBass: 43 };
+  // Every bowed string shares instrument typeId 0x05 ("bowed string").
+  var TYPE_ID = { violin: 0x05, viola: 0x05, cello: 0x05, doubleBass: 0x05 };
 
   function render(host) {
     // Subscribe once to live status so the Notes step can read the real motor
@@ -134,11 +138,13 @@
       GMB.field('Instrument name', GMB.input(inst, 'name')),
       GMB.field('Description (optional)', GMB.input(inst, 'description')),
       GMB.field('Instrument type', GMB.input(inst, 'type', {
-        type: 'select', options: Object.keys(TUNINGS).concat(['custom']),
+        type: 'select', options: Object.keys(TUNINGS).map(function (k) {
+          return { value: k, label: TYPE_LABEL[k] || k };
+        }).concat([{ value: 'custom', label: 'Custom' }]),
         onChange: applyType
       })),
-      GMB.field('Number of strings (1–6)', GMB.input(inst, 'stringCount', {
-        type: 'number', min: 1, max: 6, onChange: function (v) { setStringCount(v); }
+      GMB.field('Number of strings (1–4)', GMB.input(inst, 'stringCount', {
+        type: 'number', min: 1, max: 4, onChange: function (v) { setStringCount(v); }
       })),
       GMB.field('Max frets (all strings)', GMB.input(strings0(), 'maxFret', {
         type: 'number', min: 0, max: 30,
@@ -162,8 +168,8 @@
     var p = GMB.state.profile;
     if (t) {
       p.instrument.stringCount = t.notes.length;
-      p.instrument.gmProgram = GM_PROGRAM[type] || 24;
-      p.instrument.typeId = TYPE_ID[type] || 0x04;
+      p.instrument.gmProgram = GM_PROGRAM[type] || 40;
+      p.instrument.typeId = TYPE_ID[type] || 0x05;
       setStringCount(t.notes.length);
       p.strings.forEach(function (s, i) { s.openNote = t.notes[i]; s.maxFret = t.maxFret; });
       p.stringFretSelection.string.maximum = t.notes.length;
@@ -175,11 +181,13 @@
 
   // Grow/shrink the strings/homing arrays to n, cloning defaults.
   function setStringCount(n) {
-    n = Math.max(1, Math.min(6, Number(n) || 1));
+    n = Math.max(1, Math.min(4, Number(n) || 1));
     var p = GMB.state.profile;
     p.instrument.stringCount = n;
     while (p.strings.length < n) p.strings.push(GMB.deepCopy(p.strings[p.strings.length - 1] || defaultString()));
     p.strings.length = n;
+    // Keep one bow motor per string (top-level "bows" array).
+    ensureBows();
     // Keep the string-CC mapping identity-sized.
     p.stringFretSelection.string.mapping = [];
     for (var i = 0; i < n; i++) p.stringFretSelection.string.mapping.push(i);
@@ -252,7 +260,7 @@
     body.appendChild(h('div.toolbar', [
       GMB.button('Assign automatically', function () {
         var p = GMB.state.profile;
-        GMB.api.autoPins({ stringCount: p.instrument.stringCount, reserveUsb: p.board.reserveUsb })
+        GMB.api.autoPins({ stringCount: p.instrument.stringCount, bowMotors: true, reserveUsb: p.board.reserveUsb })
           .then(function (res) { p.pins = res.pins; GMB.markDirty(); drawStep(); GMB.toast('Pins assigned.', 'ok'); });
       }, 'primary'),
       GMB.button('Open full pin editor', function () { GMB.navigate('pins'); }, 'ghost')
@@ -514,17 +522,20 @@
 
   // ---- Step 6: Servos per string -------------------------------------------
   var ROLE_LABEL = {
-    finger: 'Finger', pluck: 'Pluck (plectrum)', strum: 'Strum', strumLift: 'Strum lift',
-    damper: 'Damper', sharedDamper: 'Shared damper', aux: 'Auxiliary'
+    finger: 'Finger', bowPress: 'Bow press (contact force)', aux: 'Auxiliary'
   };
   function roleLabel(fn) { return ROLE_LABEL[fn] || fn; }
 
   function stepServos(body) {
+    ensureBows();
     body.appendChild(h('h3', 'Servos per string'));
-    body.appendChild(h('p.muted', 'Add the servos each string uses. Every servo is driven either by a PCA9685 channel or directly from a free ESP32 GPIO — mix them freely, or use no PCA at all.'));
+    body.appendChild(h('p.muted', 'Add the servos each string uses — a finger for fret-stopping and a bowPress descent servo that sets the bow contact force. Every servo is driven either by a PCA9685 channel or directly from a free ESP32 GPIO — mix them freely, or use no PCA at all.'));
     body.appendChild(channelMap());
     body.appendChild(stringTabs());
     body.appendChild(stringServoSection(activeStr));
+    body.appendChild(h('h3', 'Bow motor for this string'));
+    body.appendChild(h('p.muted', 'Each string is bowed by its own H-bridge motor (BOW_PWM speed / BOW_DIR direction, one shared BOW_EN). Set its duty range, ramp times and bowing direction.'));
+    body.appendChild(stringBowSection(activeStr));
     if (GMB.isAdvanced()) body.appendChild(sharedServoSection());
   }
 
@@ -565,10 +576,7 @@
       servos.length ? h('div.servo-list', servos.map(servoRow)) : h('p.muted', 'No servo yet — add one below.'),
       h('div.toolbar.wrap', [
         GMB.button('+ Finger', function () { addServo('finger', i); }, 'ghost'),
-        GMB.button('+ Strum', function () { addServo('strum', i); }, 'ghost'),
-        GMB.button('+ Strum lift', function () { addServo('strumLift', i); }, 'ghost'),
-        GMB.button('+ Damper', function () { addServo('damper', i); }, 'ghost'),
-        GMB.button('+ Pluck (plectrum)', function () { addServo('pluck', i); }, 'ghost')
+        GMB.button('+ Bow press', function () { addServo('bowPress', i); }, 'ghost')
       ])
     ]);
   }
@@ -577,12 +585,68 @@
     var p = GMB.state.profile;
     var servos = p.servos.filter(function (sv) { return sv.stringIndex === -1; });
     return h('div.substring', [
-      h('div.substring-head', [h('strong', 'Shared / auxiliary servos'), h('span.muted', 'stringIndex −1 (a shared damper or auxiliary actuator)')]),
+      h('div.substring-head', [h('strong', 'Shared / auxiliary servos'), h('span.muted', 'stringIndex −1 (an auxiliary actuator)')]),
       servos.length ? h('div.servo-list', servos.map(servoRow)) : h('p.muted', 'No shared servo.'),
       h('div.toolbar.wrap', [
-        GMB.button('+ Shared damper', function () { addServo('sharedDamper', -1); }, 'ghost'),
         GMB.button('+ Auxiliary', function () { addServo('aux', -1); }, 'ghost')
       ])
+    ]);
+  }
+
+  // ---- Bow motor per string (H-bridge; top-level "bows" array) --------------
+  // Keep one bow entry per string, stringIndex aligned. Structural sync only
+  // (no markDirty on a plain view; matches how the CC mapping is normalised).
+  function ensureBows() {
+    var p = GMB.state.profile, n = p.instrument.stringCount;
+    if (!p.bows) p.bows = [];
+    while (p.bows.length < n) p.bows.push(GMB.bowDefaults(p.bows.length));
+    if (p.bows.length > n) p.bows.length = n;
+    p.bows.forEach(function (b, i) { if (b.stringIndex !== i) b.stringIndex = i; });
+    return p.bows;
+  }
+
+  function copyBowToAll(src) {
+    var keys = ['enabled', 'minDutyPct', 'maxDutyPct', 'pwmFreqHz', 'spinUpMs', 'spinDownMs', 'reverse', 'alternate'];
+    ensureBows().forEach(function (b) {
+      if (b === src) return;
+      keys.forEach(function (k) { b[k] = src[k]; });
+    });
+    GMB.markDirty(); drawStep(); GMB.toast('Bow settings copied to all strings.', 'ok');
+  }
+
+  function stringBowSection(i) {
+    var b = ensureBows()[i];
+    if (!b) return h('p.muted', 'No bow motor for this string.');
+    var s = GMB.state.profile.strings[i];
+    var basic = [
+      GMB.field('Bow motor enabled', GMB.input(b, 'enabled', { type: 'checkbox', onChange: function () { drawStep(); } }),
+        'Uncheck to skip this bow wheel without losing its settings.'),
+      GMB.field('Min duty (%)', GMB.input(b, 'minDutyPct', { type: 'number', min: 0, max: 100 }),
+        'Duty at the lowest bowing intensity.'),
+      GMB.field('Max duty (%)', GMB.input(b, 'maxDutyPct', { type: 'number', min: 0, max: 100 }),
+        'Duty at full bowing intensity (velocity / CC7 / CC11 map between the two).'),
+      GMB.field('Reverse direction', GMB.input(b, 'reverse', { type: 'checkbox' }),
+        'Flip the default bowing sense (BOW_DIR level).'),
+      GMB.field('Alternate direction per note', GMB.input(b, 'alternate', { type: 'checkbox' }),
+        'Down-bow, up-bow, down-bow… on successive notes.')
+    ];
+    var adv = [];
+    if (GMB.isAdvanced()) {
+      adv = [
+        GMB.field('PWM frequency (Hz)', GMB.input(b, 'pwmFreqHz', { type: 'number', min: 1000, max: 40000 }),
+          'Ultrasonic so the switching stays inaudible (default 20000).'),
+        GMB.field('Spin-up (ms)', GMB.input(b, 'spinUpMs', { type: 'number', min: 0 }),
+          'Ramp time from a standstill up to the target speed.'),
+        GMB.field('Spin-down (ms)', GMB.input(b, 'spinDownMs', { type: 'number', min: 0 }),
+          'Ramp time back down to a standstill.')
+      ];
+    }
+    return h('div.substring', [
+      h('div.substring-head', [h('strong', 'String ' + (i + 1) + ' bow motor'),
+        h('span.pill.mini', GMB.noteName(s.openNote)),
+        b.enabled ? null : h('span.pill.mini.muted', 'disabled')]),
+      h('div.form-grid', basic.concat(adv)),
+      h('div.toolbar', [copyToAllBtn('Copy bow settings to all strings', copyBowToAll, b)])
     ]);
   }
 
@@ -596,8 +660,7 @@
   }
   function addServo(fn, stringIndex) {
     var opts = { source: 'pca', pcaBoard: 0, channel: nextFreeChannel(0) };
-    if (fn === 'pluck' || fn === 'strum') { opts.activeUs = 1700; opts.travelMs = 90; opts.settleMs = 20; }
-    if (fn === 'damper' || fn === 'sharedDamper') { opts.activeUs = 1600; }
+    if (fn === 'bowPress') { opts.travelMs = 90; opts.settleMs = 20; }
     GMB.state.profile.servos.push(GMB.servoDefaults(fn, stringIndex, opts));
     GMB.markDirty(); drawStep();
   }
@@ -675,29 +738,16 @@
       GMB.field('Rest (µs)', GMB.input(sv, 'restUs', { type: 'number' })),
       GMB.field('Active (µs)', GMB.input(sv, 'activeUs', { type: 'number' }))
     ]);
-    // Strum / stroke motion — shown for the roles that actually strike a string.
-    var role = sv.function;
-    var isStriker = role === 'strum' || role === 'pluck';
-    if (role === 'strumLift') {
-      fields.push(GMB.field('Engage delay (ms)', GMB.input(sv, 'engageDelayMs', { type: 'number', min: 0 }),
-        'Extra pause after the lift is down, before the strum stroke fires.'));
-    }
-    if (isStriker) {
-      fields.push(GMB.field('Alternate stroke direction', GMB.input(sv, 'alternateDirection', {
-        type: 'checkbox', onChange: function () { drawStep(); } }),
-        'Down-stroke, up-stroke, down-stroke… on successive strokes.'));
-      if (sv.alternateDirection) {
-        fields.push(GMB.field('Up-stroke active (µs, 0 = mirror rest)', GMB.input(sv, 'activeAltUs', { type: 'number', min: 0 })));
-      }
-      fields.push(GMB.field('Stroke time (ms, 0 = use travel)', GMB.input(sv, 'strokeMs', { type: 'number', min: 0 }),
-        'How long the stroke stays engaged (its speed), independent of the return.'));
-      fields.push(GMB.field('Min strike depth (µs, 0 = off)', GMB.input(sv, 'minStrikeUs', { type: 'number', min: 0 }),
-        'Guaranteed depth toward the string so soft notes still catch it.'));
+    // Bow-press contact force — the descent servo can guarantee a minimum pulse
+    // so soft notes still make light bow contact.
+    if (sv.function === 'bowPress') {
+      fields.push(GMB.field('Min contact force (µs, 0 = off)', GMB.input(sv, 'minForceUs', { type: 'number', min: 0 }),
+        'Minimum bow-descent pulse — guarantees light contact so soft notes still sound.'));
     }
     if (GMB.isAdvanced()) {
       fields = fields.concat([
         GMB.field('Function', GMB.input(sv, 'function', {
-          type: 'select', options: ['finger', 'pluck', 'strum', 'strumLift', 'damper', 'sharedDamper', 'aux'],
+          type: 'select', options: ['finger', 'bowPress', 'aux'],
           onChange: function () { drawStep(); }
         })),
         GMB.field('Pulse min (µs)', GMB.input(sv, 'pulseMinUs', { type: 'number' })),
@@ -714,7 +764,7 @@
       h('div.toolbar', [
         GMB.button('Test rest', function () { testServo(sv, 'rest'); }, 'ghost'),
         GMB.button('Test active', function () { testServo(sv, 'active'); }, 'ghost'),
-        isStriker ? GMB.button('Test strike', function () {
+        sv.function === 'bowPress' ? GMB.button('Test descent', function () {
           testServo(sv, 'active');
           setTimeout(function () { testServo(sv, 'rest'); }, 250);
         }, 'ghost') : null,
@@ -868,7 +918,7 @@
   GMB.validateProfile = function (p) {
     var out = [];
     if (!p.instrument.name) out.push('Instrument name is empty.');
-    if (p.instrument.stringCount < 1 || p.instrument.stringCount > 6) out.push('String count must be 1–6.');
+    if (p.instrument.stringCount < 1 || p.instrument.stringCount > 4) out.push('String count must be 1–4.');
     if (p.strings.length !== p.instrument.stringCount) out.push('String array size does not match the string count.');
     // Pin conflicts (basic duplicate check; full check on the Pins page).
     var seen = {};
@@ -904,6 +954,13 @@
         if (pcaSeen[key]) out.push(lbl + ' shares PCA board ' + sv.pcaBoard + ' channel ' + sv.channel + ' with ' + pcaSeen[key] + '.');
         else pcaSeen[key] = lbl;
       }
+    });
+    // Bow motors (H-bridge): each must target a real string with a sane duty
+    // range (matches firmware BowConfig / ProfileValidator).
+    (p.bows || []).forEach(function (b) {
+      var lbl = 'Bow motor' + (b.stringIndex >= 0 ? ' (string ' + (b.stringIndex + 1) + ')' : '');
+      if (b.stringIndex < 0 || b.stringIndex >= p.instrument.stringCount) out.push(lbl + ' targets a string that does not exist.');
+      if (b.minDutyPct < 0 || b.maxDutyPct > 100 || b.minDutyPct > b.maxDutyPct) out.push(lbl + ' has an invalid duty range (0–100 %, min ≤ max).');
     });
     return out;
   };

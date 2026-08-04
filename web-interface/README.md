@@ -1,4 +1,4 @@
-# Stepper-Plucked-Strings-GMB — Web configuration interface
+# Servo-bowed-strings-GMB — Web configuration interface
 
 Local, browser-based configuration UI for the ESP32-S3 MIDI instrument
 controller. It lets a beginner set up and run the instrument entirely from a
@@ -38,13 +38,13 @@ The firmware serves the static files from LittleFS at the device root:
 ```
 
 Reach it at the device IP (station mode) or the captive-portal address in
-access-point mode (default SSID `Stepper-Plucked-Strings-GMB`).
+access-point mode (default SSID `Servo-bowed-strings-GMB`).
 
 ## Mock mode (standalone / demo)
 
 Every REST call tries `fetch()` first and, if it fails (no backend — e.g. you
 opened `index.html` directly), transparently falls back to an in-memory mock
-with realistic sample data: a **4-string GCEA ukulele**. The WebSocket streams
+with realistic sample data: a **4-string violin**. The WebSocket streams
 fall back to timed mock pumps that emit a plausible GMB tablature sequence and
 live status jitter. A pulsing **DEMO / MOCK DATA** badge appears in the top bar
 whenever mock data is in use.
@@ -87,15 +87,14 @@ values, hidden fine-tuning, only recommended GPIOs) and **Advanced** (manual
 GPIO assignment including caution pins, detailed motor/servo/homing parameters,
 SysEx block toggles, raw byte views), per SPECIFICATION.md §9.2.
 
-## Per-string servos, endstops & fret editor (wizard steps 5–7)
+## Per-string servos, bow motors, endstops & fret editor (wizard steps 5–7)
 
-The setup wizard configures a full instrument (1–6 strings) with a stepper plus
-servos per string, **with or without a PCA9685**:
+The setup wizard configures a full instrument (1–4 strings) with a stepper, a
+bow motor and servos per string, **with or without a PCA9685**:
 
-- **Servos per string (step 6).** For each string, add the servos it uses —
-  **finger**, **strum**, an optional **strum lift** (raises/lowers the strum
-  servo per stroke), **damper** and an optional **pluck**. Each servo picks its
-  signal **source**:
+- **Servos per string (step 6).** For each string, add the servos it uses — a
+  **finger** (fret-stopping) and a **bowPress** descent servo that sets the bow
+  contact force. Each servo picks its signal **source**:
   - **PCA9685** — choose `pcaBoard` (0–3, i.e. up to four boards / 64 channels)
     and `channel` (0–15). A compact channel-availability map flags duplicate
     `board+channel` in red.
@@ -106,10 +105,16 @@ servos per string, **with or without a PCA9685**:
 
   The system works with **no PCA at all** (every servo on a direct GPIO) or any
   mix. Per-string servos get their `stringIndex` set automatically; Advanced mode
-  also exposes **shared/auxiliary** servos (`stringIndex = -1`, e.g.
-  `sharedDamper`/`aux`). Each servo carries its calibration (rest/active µs,
-  pulse min/max, inverted, travelMs, settleMs, disableAtRest) and **Test
+  also exposes **auxiliary** servos (`stringIndex = -1`, `aux`). Each servo
+  carries its calibration (rest/active µs, pulse min/max, inverted, travelMs,
+  settleMs, disableAtRest, plus `minForceUs` for the bowPress servo) and **Test
   rest/active** buttons (`POST /api/test/servo`).
+
+- **Bow motor per string (step 6).** Each string is bowed by its own H-bridge
+  motor (`BOW_PWM`/`BOW_DIR` per string, one shared `BOW_EN`). The `bows[]`
+  entry sets `minDutyPct`/`maxDutyPct` (the bowing-intensity duty range),
+  `pwmFreqHz` (ultrasonic, default 20000), `spinUpMs`/`spinDownMs` ramp times,
+  and the `reverse`/`alternate` bowing-direction flags.
 
 - **Endstops per string (step 5).** Each string's HOME switch GPIO
   (input+interrupt capable) plus the full homing sub-object
@@ -162,10 +167,12 @@ WebSocket:
 
 Import/export use the project profile schema (`project`, `profileVersion`,
 `capabilitiesRevision`, `instrument`, `board`, `pins`, `network`, `midi`,
-`stringFretSelection`, `strings`, `servos`). Field names match the firmware core
-(`firmware/src/core/…`). Each entry in `servos` carries
+`stringFretSelection`, `strings`, `servos`, `bows`). Field names match the
+firmware core (`firmware/src/core/…`). Each entry in `servos` carries
 `source` (`"pca"`/`"gpio"`), `stringIndex`, `pcaBoard`, `channel` and `gpio`
-alongside its µs calibration; each string in `strings` carries a `homing`
+alongside its µs calibration; each entry in `bows` carries `enabled`,
+`stringIndex`, `minDutyPct`, `maxDutyPct`, `pwmFreqHz`, `spinUpMs`, `spinDownMs`,
+`reverse` and `alternate`; each string in `strings` carries a `homing`
 sub-object and an optional `calibratedFretMm[]` table.
 **The Wi-Fi password is never included in exports.**
 

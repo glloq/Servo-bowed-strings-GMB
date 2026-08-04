@@ -1,4 +1,4 @@
-# Web Interface — Stepper-Plucked-Strings-GMB
+# Web Interface — Servo-bowed-strings-GMB
 
 > Sources: `SPECIFICATION.md` §9, §10, §18, §19, §20 · `STRING_FRET_SELECTION.md` §14–16 · `SYSEX_CAPABILITIES.md` §17–18.
 > Related documents: [`ARCHITECTURE.md`](ARCHITECTURE.md) · [`PIN_CONFIGURATION.md`](PIN_CONFIGURATION.md) · [`MIDI_PROTOCOL.md`](MIDI_PROTOCOL.md) · [`FIRST_CONFIGURATION.md`](FIRST_CONFIGURATION.md).
@@ -30,20 +30,20 @@ of detailed parameters, JSON import/export.
 
 | Step | Title | Content |
 | ----- | ----- | ------- |
-| 1 | **Identification** | name, description, number of strings, instrument type, proposed tuning, max frets (applied to all strings), **capo** |
+| 1 | **Identification** | name, description, number of strings (1–4), instrument type (violin/viola/cello/double bass), proposed tuning, max frets (applied to all strings), **capo** |
 | 2 | **Board selection** | ESP32 model → available/reserved/recommended GPIOs (`esp32-s3-devkitc-1` profile); plus a **Network** panel: Wi-Fi mode (AP/station), SSID, hostname, AP name |
 | 3 | **Automatic assignment** | "Assign pins automatically" button (number of strings, interfaces, board, future USB, diagnostic port, I²C, sensors) |
 | 4 | **Mechanical configuration** | per string: axis enabled, vibrating length, transmission, motor wiring polarity (invert direction), **max speed & acceleration** (now in the simplified view), and Advanced geometry; a **jog ±1/±5 mm** control to check the motor direction live; **Copy mechanics to all strings** |
 | 5 | **Homing** | per axis: HOME GPIO, active level, homing search direction, **zero offset / rest position (FDC)**; Advanced adds speeds, back-off, timeout, LIMIT GPIO & level; **Home all axes now** and **Copy homing to all** |
-| 6 | **Servo calibration** | per servo: source/channel, rest, active, travel/settle, disable at rest; **strum/stroke motion** for strike roles — alternate stroke direction (+ up-stroke pulse), stroke time, minimum strike depth; **engage delay** for a strum lift; a **Test strike** pulse |
+| 6 | **Servos & bow drive** | per servo (`finger`, `bowPress`): source/channel, rest, active, travel/settle, disable at rest, **minimum contact force** (`minForceUs`) so a soft note still speaks, **Test rest / Test active** pulses; then the string's **bow motor** — **min/max PWM duty** (soft…full velocity), PWM frequency (20 kHz), spin-up/spin-down ramps, direction **reverse**, **alternate** down-bow/up-bow (exercise it with a test note in step 8) |
 | 7 | **Note calibration** | per string a **Fret offset from FDC** (nut position) that shifts every fret; automatic fret computation **or** manual calibration — move the axis and **Capture position** records the live motor position; an **Abs (FDC)** column; **Copy scale + calibration to all** |
-| 8 | **Test** | test each motor, sensor, finger, pick, note, string, a chord, the emergency stop |
+| 8 | **Test** | test each motor, sensor, finger, bow, note, string, a chord, the emergency stop |
 | 9 | **Validation** | "Valid configuration" or a precise list of problems; no actuator is enabled until the critical errors are fixed |
 
 The per-string steps (4–7) show **one string at a time** via a string-tab strip,
-so a 6-string instrument stays navigable. General MIDI parameters (sustain CC,
+so a 4-string instrument stays navigable. General MIDI parameters (sustain CC,
 chord **saturation strategy**, velocity curve…) and a **Playback timing** card
-(fixed note-execution delay, finger lead, strum lead) live on the **MIDI** page.
+(fixed note-execution delay, finger lead, **bow lead**) live on the **MIDI** page.
 
 The step-by-step detail is in [`FIRST_CONFIGURATION.md`](FIRST_CONFIGURATION.md).
 The computations for steps 4–7 are in [`CALIBRATION.md`](CALIBRATION.md).
@@ -63,8 +63,8 @@ temperatures · voltages · STOP button
 ```
 
 Per string: status (state machine), current note, current fret, motor position,
-target position, remaining distance, HOME state, LIMIT state, finger state, pick
-state, last fault.
+target position, remaining distance, HOME state, LIMIT state, finger state, bow
+state (lifted / bowing, motor speed), last fault.
 
 ### 3.2 MIDI page — string/fret selection (STRING_FRET_SELECTION §14–16)
 
@@ -74,7 +74,7 @@ state, last fault.
 [✓] Enable string/fret selection
 System used: [ General-Midi-Boop ]
 String CC: [ 20 ]      Fret CC: [ 21 ]
-String numbering: [ 1 to 6 ]
+String numbering: [ 1 to 4 ]
 String order: [ Normal ]
 When CC is absent: [ Choose automatically ]
 ```
@@ -98,7 +98,8 @@ the log.
 **Built-in test tool (§16)** — choose string, fret, MIDI note, velocity,
 channel; automatically sends string CC → fret CC → Note On → Note Off after a
 chosen duration, and displays each step (CC received, selection validated, axis
-moving, position reached, finger pressed, string plucked).
+moving, position reached, finger pressed, bow lowered and motor spinning, then
+bow lifted at Note Off).
 
 ### 3.3 MIDI page — GMB identity and capabilities (SysEx §17–18)
 
@@ -110,8 +111,8 @@ communication" buttons, status of the last detection. Computed capabilities,
 read-only:
 
 ```text
-Strings: 4 · Frets: 12 · MIDI range: 40 to 76 · Polyphony: 4
-String CC: 20 · Fret CC: 21 · Tuning: E2 A2 D3 G3 · Revision: 7
+Strings: 4 · Frets: 19 · MIDI range: 55 to 95 · Polyphony: 4
+String CC: 20 · Fret CC: 21 · Tuning: G3 D4 A4 E5 · Revision: 7
 ```
 
 **Advanced mode (§17.2)**: enabling blocks 5/6/7, choice of the block 7 version,
@@ -130,8 +131,10 @@ error, response time. Protocol details in
 Global channel, Omni mode, per-string channel, general/per-string transposition,
 note range, velocity curve (linear / soft / hard / exponential / custom), Note
 Off behavior, sustain pedal, chord grouping delay (default 3 ms), saturation
-strategy (see `NoteAllocator`, [`ARCHITECTURE.md`](ARCHITECTURE.md)). Velocity can
-act on the pick travel/speed, the attack delay, the plucking profile.
+strategy (see `NoteAllocator`, [`ARCHITECTURE.md`](ARCHITECTURE.md)). Velocity
+acts on both the **bow-motor speed** (PWM duty) and the **bow contact force**
+(bowPress servo) — louder = faster and firmer — and CC7/CC11 re-drive both live
+on a sounding note for crescendo/decrescendo.
 
 ### 3.5 Profiles (§20)
 
@@ -140,11 +143,11 @@ restore, set the startup profile. **JSON** exchange format:
 
 ```json
 {
-  "project": "Stepper-Plucked-Strings-GMB",
+  "project": "Servo-bowed-strings-GMB",
   "profileVersion": 1,
-  "instrument": { "name": "Ukulele 4 strings", "stringCount": 4 },
+  "instrument": { "name": "Violin", "stringCount": 4 },
   "board": { "profile": "esp32-s3-devkitc-1", "reserveUsb": true, "automaticPinAssignment": true },
-  "network": { "mode": "station", "hostname": "gmb-ukulele" },
+  "network": { "mode": "station", "hostname": "gmb-violin" },
   "strings": []
 }
 ```
@@ -173,8 +176,8 @@ option is set).
 | `POST` | `/api/pins/auto` | automatic assignment (`PinRequest`) → assignments |
 | `POST` | `/api/pins/validate` | pin validation → list of `PinError` |
 | `POST` | `/api/panic` | software panic (`SafetyManager::panic`) |
-| `POST` | `/api/test/note` | play a test note (string, fret, note, velocity, channel) |
-| `POST` | `/api/test/servo` | pulse a servo to rest/active (armed only) |
+| `POST` | `/api/test/note` | play a test note (string, fret, note, velocity, channel) — moves, presses the finger, lowers the bow and spins the motor until the note ends |
+| `POST` | `/api/test/servo` | pulse a servo (finger / bowPress) to rest/active (armed only) |
 | `POST` | `/api/test/jog` | nudge one axis by a signed mm delta (armed only) |
 | `POST` | `/api/test/endstop` | read a HOME/LIMIT sensor for one axis |
 | `POST` | `/api/sysex/request` | simulate a GMB SysEx request → decoded response |

@@ -261,7 +261,12 @@
         { signal: 'HOME1', kind: 'home', gpio: 12 }, { signal: 'HOME2', kind: 'home', gpio: 13 },
         { signal: 'HOME3', kind: 'home', gpio: 14 }, { signal: 'HOME4', kind: 'home', gpio: 21 },
         { signal: 'SDA', kind: 'sda', gpio: 40 }, { signal: 'SCL', kind: 'scl', gpio: 41 },
-        { signal: 'ENABLE', kind: 'enable', gpio: 42 }, { signal: 'SERVO_OE', kind: 'servoOe', gpio: 47 }
+        { signal: 'ENABLE', kind: 'enable', gpio: 42 }, { signal: 'SERVO_OE', kind: 'servoOe', gpio: 47 },
+        { signal: 'BOW_PWM1', kind: 'bowPwm', gpio: 1 }, { signal: 'BOW_PWM2', kind: 'bowPwm', gpio: 2 },
+        { signal: 'BOW_PWM3', kind: 'bowPwm', gpio: 10 }, { signal: 'BOW_PWM4', kind: 'bowPwm', gpio: 11 },
+        { signal: 'BOW_DIR1', kind: 'bowDir', gpio: 15 }, { signal: 'BOW_DIR2', kind: 'bowDir', gpio: 16 },
+        { signal: 'BOW_DIR3', kind: 'bowDir', gpio: 38 }, { signal: 'BOW_DIR4', kind: 'bowDir', gpio: 39 },
+        { signal: 'BOW_EN', kind: 'bowEnable', gpio: 33 }
       ],
       network: {
         mode: 'accessPoint', ssid: '', hostname: 'gmb-instrument',

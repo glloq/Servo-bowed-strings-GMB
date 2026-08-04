@@ -2,7 +2,7 @@
 
 ## 1. Objective
 
-Stepper-Plucked-Strings-GMB must automatically communicate its capabilities to General-Midi-Boop.
+Servo-bowed-strings-GMB must automatically communicate its capabilities to General-Midi-Boop.
 
 The announced information must be generated from the active profile stored in the ESP32.
 
@@ -184,18 +184,18 @@ F0 7D 00 05 01
 F7
 ```
 
-Example for a guitar on internal MIDI channel 1, corresponding to user channel 2:
+Example for a violin on internal MIDI channel 1, corresponding to user channel 2:
 
 ```text
-F0 7D 00 05 01 01 01 01 18 04 F7
+F0 7D 00 05 01 01 01 01 28 05 F7
 ```
 
 With:
 
 ```text
 internal MIDI channel = 1
-GM program            = 24, nylon guitar
-type                  = 0x04, guitar
+GM program            = 40, violin
+type                  = 0x05, bowed string
 ```
 
 ---
@@ -303,13 +303,13 @@ It must however be able to be limited in the Web interface.
 Examples:
 
 ```text
-6 strings with individual plectrums → maximum polyphony 6
+4 strings, one bow motor each        → maximum polyphony 4
 
-6 strings, per-string plucking
-but independent sustain              → maximum polyphony 6
+4 strings, each bowed and sustained
+independently                        → maximum polyphony 4
 
-6 strings with mechanical constraints
-limiting play to 4 strings           → polyphony configured to 4
+4 strings with a mechanical
+constraint limiting play to 3        → polyphony configured to 3
 ```
 
 The setting must offer:
@@ -327,15 +327,20 @@ Block 6 must declare the CCs that are actually enabled.
 
 Possible list:
 
-|    CC | Function                       |
-| ----: | ------------------------------ |
-|   CC7 | master volume                  |
-|  CC11 | expression                     |
-|  CC20 | default string selection       |
-|  CC21 | default fret selection         |
-|  CC64 | sustain                        |
-| CC120 | immediate sound off            |
-| CC123 | all notes off                  |
+|    CC | Function                                      |
+| ----: | --------------------------------------------- |
+|   CC7 | master volume — modulates a sustained note    |
+|  CC11 | expression — modulates a sustained note       |
+|  CC20 | default string selection                      |
+|  CC21 | default fret selection                        |
+|  CC64 | sustain                                       |
+| CC120 | immediate sound off                           |
+| CC123 | all notes off                                 |
+
+On the bowed instrument a note sounds **continuously** while held, so CC7 (volume)
+and CC11 (expression) are live modulators: received while a note is sounding they
+re-drive the bow-motor speed and the bow contact force, giving true
+crescendo/decrescendo. Both are therefore always announced.
 
 CC20 and CC21 must be replaced by the numbers actually configured in the interface.
 
@@ -383,11 +388,15 @@ F0 7D 00 07 01
 F7
 ```
 
-For Stepper-Plucked-Strings-GMB:
+For Servo-bowed-strings-GMB:
 
 ```text
 is_fretless = 0
 ```
+
+Although a bowed string is musically fretless, the stepper still selects
+**discrete semitone positions**, so `is_fretless` stays `0` (the same
+fret-position model as a fretted instrument).
 
 The tuning must be transmitted in the order defined by General-Midi-Boop:
 
@@ -761,12 +770,12 @@ The computed capabilities must be displayed read-only:
 
 ```text
 Strings              : 4
-Frets                : 12
-MIDI range           : 40 to 76
+Frets                : 19
+MIDI range           : 55 to 95
 Polyphony            : 4
 String CC            : 20
 Fret CC              : 21
-Tuning               : E2 A2 D3 G3
+Tuning               : G3 D4 A4 E5
 Revision             : 7
 ```
 
@@ -820,8 +829,8 @@ Response:
 F0 7D 00 06 01 ...
 
 Channel     : 1
-Type        : guitar
-Range       : E2 to E5
+Type        : bowed string (violin)
+Range       : G3 to B6
 Polyphony   : 4
 CC          : 7, 11, 20, 21, 64, 120, 123
 Result      : valid

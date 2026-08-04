@@ -2,7 +2,7 @@
 
 ## 1. Objective
 
-Stepper-Plucked-Strings-GMB must be able to receive an explicit indication of the string and fret to use before a note is triggered.
+Servo-bowed-strings-GMB must be able to receive an explicit indication of the string and fret to use before a note is triggered.
 
 This function allows the main control system, in particular General-Midi-Boop, to directly transmit a tablature position:
 
@@ -39,6 +39,13 @@ with a velocity of 100
 ```
 
 The controller numbers and values must not be hard-coded. All parameters must be editable from the Web interface.
+
+This document covers only the **string/fret selection** CCs (CC20/CC21 by
+default); their mechanism is unchanged on the bowed instrument. Note that CC7
+(volume) and CC11 (expression) play a different, live role here: because a bowed
+note **sounds continuously** while held, they modulate a **sustained** note —
+re-driving the bow-motor speed and contact force for crescendo/decrescendo — see
+[`docs/MIDI_PROTOCOL.md`](docs/MIDI_PROTOCOL.md).
 
 ---
 
@@ -274,7 +281,7 @@ Fret zero must automatically result in:
 ```text
 finger raised
 no press on the string
-pluck of the open string
+bowing of the open string
 ```
 
 ---
@@ -454,7 +461,7 @@ Recommended value:
 3. validate the note/string/fret consistency ;
 4. remove the selection from the queue ;
 5. prepare the motor ;
-6. schedule the press and the pluck.
+6. schedule the press and the bow attack.
 ```
 
 This method remains functional if the events of a chord are grouped by type.
@@ -480,7 +487,7 @@ motor movement
         ↓
 Note On received
         ↓
-press and pluck when the position is ready
+press, then lower the bow and spin the motor when the position is ready
 ```
 
 This behavior must be configurable:
@@ -499,11 +506,11 @@ The `Note On` keeps its role as the musical trigger.
 
 If the motor has not yet reached the fret at the time of the `Note On`:
 
-* the pluck must be put on hold;
+* the bow attack must be put on hold;
 * the stepper motor must finish its movement;
 * the finger must be pressed;
-* the pluck must then be executed;
-* no anticipated pluck must be produced.
+* the bow must then be lowered and the motor spun up;
+* no anticipated bowing must be produced.
 
 ---
 
@@ -632,7 +639,7 @@ Fret CC :
 [ 21 ]
 
 String numbering :
-[ 1 to 6 ]
+[ 1 to 4 ]
 
 String order :
 [ Normal ]
@@ -712,7 +719,7 @@ selection validated
 axis moving
 position reached
 finger pressed
-string plucked
+bow lowered, motor spinning
 ```
 
 ---
@@ -734,17 +741,17 @@ string plucked
     "string": {
       "ccNumber": 20,
       "minimum": 1,
-      "maximum": 6,
+      "maximum": 4,
       "offset": 0,
       "numbering": "oneBased",
       "reverseOrder": false,
-      "mapping": [0, 1, 2, 3, 4, 5]
+      "mapping": [0, 1, 2, 3]
     },
 
     "fret": {
       "ccNumber": 21,
       "minimum": 0,
-      "maximum": 24,
+      "maximum": 19,
       "offset": 0,
       "invalidValuePolicy": "automaticFallback"
     },

@@ -1,4 +1,4 @@
-# First configuration guide — Stepper-Plucked-Strings-GMB
+# First configuration guide — Servo-bowed-strings-GMB
 
 > Source: `SPECIFICATION.md` §8, §10, §26 (first configuration guide).
 > Related documents: [`WEB_INTERFACE.md`](WEB_INTERFACE.md) · [`PIN_CONFIGURATION.md`](PIN_CONFIGURATION.md) · [`CALIBRATION.md`](CALIBRATION.md) · [`MIDI_PROTOCOL.md`](MIDI_PROTOCOL.md) · [`SAFETY.md`](SAFETY.md).
@@ -24,7 +24,7 @@ the **simplified mode** of the Web interface. No code modification is needed.
 At first power-on, the ESP32 starts in **access-point mode**:
 
 ```text
-Default SSID: Stepper-Plucked-Strings-GMB
+Default SSID: Servo-bowed-strings-GMB
 ```
 
 1. Connect your phone/computer to this Wi-Fi network.
@@ -39,8 +39,8 @@ several times, the system automatically reverts to access-point mode.
 
 ## 2. Step 1 — Identification
 
-Fill in: instrument name, description (optional), **number of strings** (1 to 6),
-instrument type (ukulele, guitar, bass, mandolin, banjo…), proposed tuning,
+Fill in: instrument name, description (optional), **number of strings** (1 to 4),
+instrument type (violin, viola, cello, double bass…), proposed tuning,
 maximum number of frets. These values determine the note range and are announced
 to General-Midi-Boop (see [`MIDI_PROTOCOL.md`](MIDI_PROTOCOL.md) §3).
 
@@ -67,8 +67,10 @@ I²C bus and the sensors. In simplified mode, you only see the **green** pins. I
 signal cannot be placed, the wizard explains it and suggests an alternative.
 
 Example assignment obtained (DevKitC-1 profile, see
-[`PIN_CONFIGURATION.md`](PIN_CONFIGURATION.md) §5): STEP on 4/5/6…, DIR on 17/18…,
-HOME on 12/13…, I²C SDA 40 / SCL 41, ENABLE 42, PCA9685 safety 47.
+[`PIN_CONFIGURATION.md`](PIN_CONFIGURATION.md) §5): STEP on 4/5/6/7, DIR on
+17/18/8/9, HOME on 12/13/14/21, I²C SDA 40 / SCL 41, ENABLE 42, PCA9685 safety
+47, and the bow H-bridge lines BOW_PWM on 1/2/10/11, BOW_DIR on 15/16/38/39,
+shared BOW_EN on 33.
 
 ---
 
@@ -91,12 +93,18 @@ machine `CHECK_SENSOR → … → READY`, see [`CALIBRATION.md`](CALIBRATION.md)
 
 ---
 
-## 7. Step 6 — Servo calibration
+## 7. Step 6 — Servos & bow drive
 
-For each servo: PCA9685 channel, rest position, active position, min/max limits,
-inverted direction, travel time, settling time, disable at rest. Typical channel
-allocation: fingers 0–5, plucking 6–11, auxiliaries 12–15 (see
-[`CALIBRATION.md`](CALIBRATION.md) §4).
+For each servo (`finger`, `bowPress`): PCA9685 channel (or direct GPIO), rest
+position, active position, min/max limits, inverted direction, travel time,
+settling time, disable at rest, and a **minimum contact force** (`minForceUs`)
+so a soft note still speaks. Typical channel allocation: fingers 0–3, bow-press
+servos 4–7, auxiliaries 8–15.
+
+Then, for each string, configure its **bow motor**: min/max PWM duty (soft to
+full velocity), PWM frequency (20 kHz), spin-up/spin-down ramp times, and the
+bowing direction (reverse, and optional down-bow/up-bow alternation). See
+[`CALIBRATION.md`](CALIBRATION.md) §4–5.
 
 ---
 
@@ -113,7 +121,7 @@ Two methods:
 
 ## 9. Step 8 — Test
 
-Test progressively: each motor, each sensor, each finger, each pick, each note,
+Test progressively: each motor, each sensor, each finger, each bow, each note,
 each string, a chord, then the **general stop** (STOP). Keep the STOP button
 within reach (software panic — see [`SAFETY.md`](SAFETY.md) §3).
 

@@ -29,7 +29,10 @@
         GMB.field('Enable GMB detection', GMB.input(adv, 'detectionEnabled', { type: 'checkbox' })),
         GMB.field('Instrument name', GMB.input(p.instrument, 'name', { onChange: function () { GMB.render(); } })),
         GMB.field('Instrument type', GMB.input(p.instrument, 'type', {
-          type: 'select', options: ['ukulele', 'guitar', 'bass', 'mandolin', 'banjo', 'custom'] })),
+          type: 'select', options: [
+            { value: 'violin', label: 'Violin' }, { value: 'viola', label: 'Viola' },
+            { value: 'cello', label: 'Cello' }, { value: 'doubleBass', label: 'Double bass' },
+            { value: 'custom', label: 'Custom' }] })),
         GMB.field('GM program', GMB.input(p.instrument, 'gmProgram', { type: 'number', min: 0, max: 127, onChange: function () { GMB.render(); } })),
         GMB.field('MIDI channel (1–16)', GMB.input(p.midi, 'globalChannel', { type: 'number', min: 0, max: 15 }), 'stored zero-based')
       ]),
@@ -69,7 +72,7 @@
           GMB.field('Block 7 version', GMB.input(adv, 'block7Version', {
             type: 'select', options: [{ value: 1, label: 'v1 (compatible)' }, { value: 2, label: 'v2 (extended)' }], coerce: Number })),
           GMB.field('Polyphony override (−1 = auto)', GMB.input(adv, 'polyphonyOverride', {
-            type: 'number', min: -1, max: 6, onChange: function () { GMB.render(); } }))
+            type: 'number', min: -1, max: 4, onChange: function () { GMB.render(); } }))
         ]),
         h('h3', 'Announced controllers'),
         h('div.cc-list', caps.supportedCc.map(function (c) { return h('span.pill.mini', 'CC' + c); })),

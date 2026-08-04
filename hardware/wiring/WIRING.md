@@ -1,6 +1,6 @@
 # Wiring guide
 
-Connection guide for the **Stepper-Plucked-Strings-GMB** reference electronics
+Connection guide for the **Servo-bowed-strings-GMB** reference electronics
 (SPECIFICATION.md §7 and §22). Default GPIO come from the ESP32-S3-DevKitC-1
 board profile (§11.5, `board-profiles/esp32-s3-devkitc-1.json`); every line can
 be reassigned from the web interface.
@@ -11,11 +11,13 @@ be reassigned from the web interface.
 
 ## 1. Default GPIO map (ESP32-S3-DevKitC-1)
 
-| Function | Strings 1 → 6 (GPIO) |
+| Function | Strings 1 → 4 (GPIO) |
 | -------- | -------------------- |
-| STEP | 4, 5, 6, 7, 15, 16 |
-| DIR | 17, 18, 8, 9, 10, 11 |
-| HOME | 12, 13, 14, 21, 38, 39 |
+| STEP | 4, 5, 6, 7 |
+| DIR | 17, 18, 8, 9 |
+| HOME | 12, 13, 14, 21 |
+| BOW_PWM (bow-motor speed, LEDC) | 1, 2, 10, 11 |
+| BOW_DIR (bowing direction) | 15, 16, 38, 39 |
 
 | Single signal | GPIO |
 | ------------- | :--: |
@@ -23,11 +25,13 @@ be reassigned from the web interface.
 | I²C SCL | 41 |
 | Global driver ENABLE | 42 |
 | PCA9685 `/OE` (servo safety) | 47 |
+| Shared bow H-bridge `BOW_EN` | 33 |
 
 Reserved / do-not-use on this board: GPIO0/3/45/46 (strapping), 19/20 (future
-USB), 26–32 (Flash/PSRAM), 35/36/37 (variant memory), 33/34 (caution), 43/44
-(UART0 programming/diagnostics), 48 (RGB LED). GPIO22–25 do not exist on the
-ESP32-S3.
+USB), 26–32 (Flash/PSRAM), 35/36/37 (variant memory), 34 (caution), 43/44
+(UART0 programming/diagnostics), 48 (RGB LED). GPIO33 is a caution pin used here
+for the shared `BOW_EN` (verify it is free on your module variant). GPIO22–25 do
+not exist on the ESP32-S3.
 
 ## 2. Stepper drivers (TMC2209, one per string)
 
@@ -60,7 +64,31 @@ end-stops wire the same way on spare interrupt-capable GPIO.
 
 **Set the driver motor current** on each TMC2209 (VREF / UART) before enabling.
 
-## 3. PCA9685 servo expander (I²C)
+## 3. Bow motors (H-bridge, one per string)
+
+Each string is bowed by its own DC motor through an H-bridge (e.g. DRV8871 /
+TB6612). Three logic lines per bridge, plus one line shared by all bridges:
+
+| H-bridge pin | Connect to | Notes |
+| ------------ | ---------- | ----- |
+| `PWM` / `IN` (speed) | ESP32-S3 `BOW_PWM<n>` GPIO (per string) | LEDC PWM, ~20 kHz (ultrasonic) — sets motor speed |
+| `DIR` / `PH` (direction) | ESP32-S3 `BOW_DIR<n>` GPIO (per string) | bowing direction; alternates for down-bow/up-bow |
+| `EN` / `STBY` | Shared `BOW_EN` (GPIO33) | **one line disables every bridge at once** |
+| `VM` / `GND` | Bow-motor rail / common ground | **separate** motor rail — see Power |
+| `OUT1 / OUT2` | bow DC motor terminals | one motor per bridge |
+
+### `BOW_EN` safety behaviour
+
+`BOW_EN` is the single hardware enable for **all** bow bridges. Firmware holds it
+**disabled** at boot and during homing, panic and E-stop, so no bow can spin; it
+is asserted only when the instrument is armed (`Ready`). Wire `BOW_EN` into the
+**same hardware safety cut** as the driver `ENABLE` and the PCA9685 `/OE` so one
+E-stop kills the steppers, the servos and the bow motors together (§21).
+
+Keep the bow-motor rail and its return **separate** from logic; add per-bridge
+decoupling (electrolytic + ceramic) close to each H-bridge to tame motor noise.
+
+## 4. PCA9685 servo expander (I²C)
 
 | PCA9685 pin | Connect to | Notes |
 | ----------- | ---------- | ----- |
