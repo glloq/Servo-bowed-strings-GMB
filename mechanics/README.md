@@ -1,6 +1,6 @@
 # Mechanics — reference architecture
 
-Reference mechanical architecture for **Stepper-Plucked-Strings-GMB**
+Reference mechanical architecture for **Servo-bowed-strings-GMB**
 (SPECIFICATION.md §5), and how each mechanical parameter maps to the instrument-profile
 fields (`firmware/src/core/motion/StepperAxis.h`, `instrument-profiles/`).
 
@@ -27,10 +27,10 @@ string, never shared**. Active strings = active stepper axes = movable fingers.
 Per string the reference build carries (§1):
 
 ```text
-1 stepper motor        1 finger-press mechanism
-1 linear axis          1 pluck mechanism
-1 carriage             1 HOME reference sensor
-1 single finger
+1 stepper motor        1 finger-press mechanism (servo)
+1 linear axis          1 bow (DC motor + rosined wheel / linear bow)
+1 carriage             1 bow-press descent mechanism (servo)
+1 single finger        1 HOME reference sensor
 ```
 
 ## 2. Finger press (§5.2)
@@ -41,28 +41,38 @@ string. The reference mechanism is **one servo per string** (PCA9685 channels
 0–5). In the profile this is a servo with `function: "finger"`, using `restUs`
 (lifted) and `activeUs` (pressed), plus `travelMs`/`settleMs` timing.
 
-Open string: finger stays lifted; the note is plucked directly (§15.3). An
+Open string: finger stays lifted; the open string is bowed directly (§15.3). An
 advanced option can instead press "fret 0" for specific mechanics.
 
-## 3. Setting the string vibrating (§5.3)
+## 3. Setting the string vibrating — the bow (§5.3)
 
-Each string is set vibrating by **its own** actuator — there is no shared
-strummer; strumming is per string:
+Each string is set vibrating by **its own bow** — there is no shared exciter.
+The bow is a **DC motor** turning a rosin-coated wheel (or driving a linear bow)
+pressed onto the string. Unlike a plucked note, a bowed note sounds
+**continuously**: the motor keeps turning, so the string keeps sounding until
+Note Off.
 
-* **Individual pluck** — one pluck actuator per string (servo `function: "pluck"`,
-  PCA9685 channels 6–11). Enables chords, repeated notes, per-string tremolo and
-  velocity, and precise per-string triggering.
-* **Per-string strum** — a per-string strum servo (`function: "strum"`) with an
-  optional `strumLift` that lowers the strum servo onto the string for a stroke
-  and raises it after. Supports up/down alternating strokes, adjustable stroke
-  speed and depth, and an engage delay — all per string.
+Two mechanisms per string work together:
 
-Per string, several servo roles can be defined: `finger` (press), `pluck`
-(individual plectrum), `strum` (per-string strum), `strumLift` (an optional
-servo that lowers the strum servo onto the string for a stroke, then raises it)
-and `damper` (per-string mute). Each string also has its own endstop
-: the `HOME` reference sensor, plus an optional `LIMIT` switch at the far
-end.
+* **Bow motor** — a DC motor driven through an **H-bridge** (three lines:
+  `BOW_PWM<n>` speed, `BOW_DIR<n>` direction, and one shared `BOW_EN`). MIDI
+  velocity sets the motor speed (PWM duty); `BOW_DIR` can alternate each note for
+  musical down-bow / up-bow strokes. Its parameters live in the profile's `bows`
+  array (`BowConfig`) — see [`../docs/CALIBRATION.md`](../docs/CALIBRATION.md) §5.
+* **Bow-press descent** — a **mandatory** per-string servo (`function: "bowPress"`)
+  that lowers the bow onto the string and **holds the contact force**. Velocity
+  scales the force between lifted (`restUs`) and full contact (`activeUs`), with a
+  `minForceUs` floor so a soft note still speaks; CC7/CC11 re-drive it live.
+
+So per string there are exactly two servo roles — `finger` (press) and
+`bowPress` (bow descent / contact force) — plus the DC bow motor. There is no
+pluck, strum or damper: the string is muted simply by lifting the bow and
+stopping its motor at Note Off. Each string also has its own endstop: the `HOME`
+reference sensor, plus an optional `LIMIT` switch at the far end.
+
+Louder = **faster and firmer**: velocity drives the bow-motor speed and the
+bow-press force together, and a held note can be shaped live with CC7/CC11 for
+crescendo/decrescendo.
 
 ## 3.1 Servo signal source: PCA9685 or direct GPIO
 
@@ -72,7 +82,9 @@ a PCA9685**, or with a mix of both:
 * **PCA9685** — up to **four boards** (`pcaBoard` 0–3, I²C 0x40–0x43 = 64
   channels). Use this once you exceed the ESP32's free PWM pins.
 * **Direct GPIO** — the servo hangs off a free ESP32-S3 pin (LEDC 50 Hz PWM),
-  handy when there is no PCA or only a couple of servos.
+  handy when there is no PCA or only a couple of servos. Direct-GPIO servos
+  share the ESP32-S3's 8 LEDC channels with the bow-motor PWMs, so
+  `direct-GPIO servos + bow PWMs ≤ 8`; a PCA9685 servo is off that budget.
 
 The web interface exposes this choice per servo and prevents channel/pin
 conflicts (see [`../docs/CALIBRATION.md`](../docs/CALIBRATION.md) §4).

@@ -1,7 +1,7 @@
 # Board profiles
 
 Machine-readable GPIO capability maps for the ESP32 boards supported by
-**Stepper-Plucked-Strings-GMB**. The web configurator and the firmware pin
+**Servo-bowed-strings-GMB**. The web configurator and the firmware pin
 manager use these files to filter which GPIO may carry which signal, per board
 and per module variant (SPECIFICATION.md §11).
 
@@ -31,22 +31,27 @@ sync means the browser UI and the on-device validator agree about every pin.
 ### `recommendedAssignment`
 
 The default, conflict-free assignment the "Assign pins automatically"
-button proposes (SPECIFICATION.md §11.5). Array fields are indexed by
-string number (1..6); the first *N* entries are used for an *N*-string
-instrument.
+button proposes (SPECIFICATION.md §11.5). A bowed instrument has at most **four
+strings**, so array fields are indexed by string number (1..4); the first *N*
+entries are used for an *N*-string instrument.
 
 | Key | Meaning | Value |
 | --- | ------- | ----- |
-| `STEP` | STEP outputs, strings 1..6 | `[4, 5, 6, 7, 15, 16]` |
-| `DIR` | DIR outputs, strings 1..6 | `[17, 18, 8, 9, 10, 11]` |
-| `HOME` | HOME sensors, strings 1..6 | `[12, 13, 14, 21, 38, 39]` |
+| `STEP` | STEP outputs, strings 1..4 | `[4, 5, 6, 7]` |
+| `DIR` | DIR outputs, strings 1..4 | `[17, 18, 8, 9]` |
+| `HOME` | HOME sensors, strings 1..4 | `[12, 13, 14, 21]` |
 | `SDA` | PCA9685 I²C data | `40` |
 | `SCL` | PCA9685 I²C clock | `41` |
 | `ENABLE` | global driver ENABLE | `42` |
 | `SERVO_OE` | PCA9685 `/OE` safety line | `47` |
+| `BOW_PWM` | bow-motor speed (LEDC), strings 1..4 | `[1, 2, 10, 11]` |
+| `BOW_DIR` | bow-motor direction, strings 1..4 | `[15, 16, 38, 39]` |
+| `BOW_EN` | shared bow H-bridge ENABLE | `33` |
 
-This is a starting profile, not a universal rule — the UI can override every
-line (SPECIFICATION.md §11.5).
+Capping at four strings frees the GPIOs the six-string plucked layout spent on
+strings 5–6 (STEP 15/16, DIR 10/11, HOME 38/39) and re-uses them for the bow
+H-bridge lines. This is a starting profile, not a universal rule — the UI can
+override every line (SPECIFICATION.md §11.5).
 
 ### `pins[]` — `PinCapability`
 
@@ -87,7 +92,8 @@ The profile encodes the ESP32-S3 restrictions of SPECIFICATION.md §11.4:
   USB transport.
 * **Flash / PSRAM (reserved):** GPIO26–32.
 * **Variant memory:** GPIO33/34 are **caution** (tied to memory on some
-  modules); GPIO35/36/37 are **reserved** (octal Flash/PSRAM variants).
+  modules); GPIO35/36/37 are **reserved** (octal Flash/PSRAM variants). GPIO33 is
+  the default shared `BOW_EN` — usable once the module variant is confirmed.
 * **UART0 (reserved):** GPIO43 (TX), GPIO44 (RX) — programming / diagnostics.
 * **On-board RGB LED (reserved):** GPIO48.
 * **Recommended:** GPIO1, 2, 4–18, 21, 38, 39, 40, 41, 42, 47.
