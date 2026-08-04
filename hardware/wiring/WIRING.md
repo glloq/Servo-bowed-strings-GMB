@@ -114,49 +114,57 @@ may also force `/OE` high directly.
 
 | Channel | Function | Servo config `function` |
 | :-----: | -------- | ----------------------- |
-| 0–5 | finger press (one per string) | `finger` |
-| 6–11 | individual pluck (one per string) | `pluck` |
-| 12–15 | dampers / auxiliary | `damper`, `sharedDamper`, `aux` |
+| 0–3 | finger press (one per string) | `finger` |
+| 4–7 | bow descent / contact force (one per string) | `bowPress` |
+| 8–15 | auxiliary | `aux` |
 
-In the example profiles: finger servos on channels `0 … N−1`, pluck servos on
-`6 … 6+N−1`.
+In the example profiles: finger servos on channels `0 … N−1`, bow-press servos on
+`4 … 4+N−1`.
 
-## 4. Power rails (§22)
+## 5. Power rails (§22)
 
 | Rail | Feeds | Source |
 | ---- | ----- | ------ |
 | **24 V** | stepper motors (through the drivers) | dedicated PSU |
+| **bow-motor rail** | bow DC motors (through the H-bridges) | **separate** bow-motor PSU |
 | **5–7.4 V** | servomotors (PCA9685 `V+`) | **separate** servo PSU/BEC |
 | **5 V** | logic | buck from 24 V or its own supply |
 | **3.3 V** | ESP32-S3, driver `VIO`, sensors | ESP board regulator |
 
 Mandatory measures:
 
-* **Separate servo supply** — no servo is ever powered from the ESP32 regulator.
-* **Fuse the motor rail** and **fuse the servo rail** independently.
+* **Separate servo and bow-motor supplies** — no servo or bow motor is ever
+  powered from the ESP32 regulator.
+* **Fuse the stepper rail, the bow-motor rail and the servo rail** independently.
 * **Reverse-polarity protection** on the incoming supply.
-* **TVS diode** across the 24 V motor rail (transient clamp).
-* **Decoupling capacitors** close to each driver module (electrolytic + ceramic).
+* **TVS diode** across the motor rail(s) (transient clamp).
+* **Decoupling capacitors** close to each driver module and each bow H-bridge
+  (electrolytic + ceramic).
 * **Bulk reservoir capacitor** near the PCA9685 `V+`.
 * **Structured common ground** — star/plane ground tying all rails at one point.
-* **Lockable connectors** on motor, servo and power harnesses.
+* **Lockable connectors** on stepper-motor, bow-motor, servo and power harnesses.
+* **`BOW_EN`, driver `ENABLE` and PCA9685 `/OE` all wired into the hardware
+  safety cut** (§21.2).
 
-## 5. Grounding & signal integrity
+## 6. Grounding & signal integrity
 
-* Single, structured common ground reference for 24 V return, 5 V, 3.3 V and
-  signal grounds.
-* Keep STEP/DIR runs short; twist motor phase pairs; route them away from the
-  HOME sensor and I²C wiring.
+* Single, structured common ground reference for the 24 V return, the bow-motor
+  return, 5 V, 3.3 V and signal grounds.
+* Keep STEP/DIR runs short; twist motor phase pairs; twist each bow-motor pair;
+  route them away from the HOME sensor and I²C wiring.
 * Keep I²C (SDA/SCL) short or add stronger pull-ups; a bulk cap stabilises the
   servo rail against inrush when several servos move together.
 
-## 6. Bring-up checklist
+## 7. Bring-up checklist
 
 1. Wire everything with all supplies **off**.
 2. Continuity-check grounds and confirm no rail-to-rail shorts.
 3. Power **logic/3.3 V only**; confirm the ESP32-S3 boots and serves the web UI.
 4. Power the **servo rail**; with `/OE` high, verify no servo twitches, then arm
-   and test one finger servo.
+   and test one finger servo and its bow-press servo.
 5. Set each **driver current**, power the **24 V** rail, and home one axis at low
    speed before enabling the rest.
-6. Verify the **STOP / panic** path disables drivers and forces `/OE` high.
+6. With `BOW_EN` still cut, power the **bow-motor rail**; confirm no motor spins,
+   then arm and test one bow at low duty.
+7. Verify the **STOP / panic** path disables drivers, forces `/OE` high **and
+   cuts `BOW_EN`** (every bow motor stops).

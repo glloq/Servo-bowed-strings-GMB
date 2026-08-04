@@ -16,14 +16,19 @@ Until then, the reference wiring is fully described in text:
 When produced, the schematic set will capture:
 
 * **ESP32-S3-DevKitC-1** connections with the GPIO assignment of §11.5.
-* **TMC2209** driver sockets (1–6, pluggable): STEP/DIR/EN, HOME, optional
+* **TMC2209** driver sockets (1–4, pluggable): STEP/DIR/EN, HOME, optional
   LIMIT/DIAG/UART, motor phases, `VM`/`VIO` supplies, current-set network.
+* **Bow-motor H-bridges** (1–4): `BOW_PWM` (LEDC speed) and `BOW_DIR` per
+  string, the shared `BOW_EN`, the bow-motor rail with per-bridge decoupling,
+  and the DC bow-motor outputs.
 * **PCA9685** servo expander: I²C (SDA/SCL) with pull-ups, `V+` servo rail with
-  bulk capacitor, all 16 channel headers, and the `/OE` safety line to GPIO47.
+  bulk capacitor, all 16 channel headers (finger + bowPress + aux), and the
+  `/OE` safety line to GPIO47.
 * **Sensor front-end**: HOME/LIMIT inputs with pull configuration.
-* **Power tree** (§22): 24 V motor, 5–7.4 V servo (separate), 5 V logic, 3.3 V —
-  with fuses (motor + servo), reverse-polarity protection, TVS on the motor
-  rail, driver decoupling and PCA9685 reservoir cap.
-* **Safety / E-stop** path: hardware disable of drivers and PCA9685 `/OE`
-  (§21.2), ESP32 kept powered.
+* **Power tree** (§22): 24 V stepper, separate bow-motor rail, 5–7.4 V servo
+  (separate), 5 V logic, 3.3 V — with fuses (stepper + bow-motor + servo),
+  reverse-polarity protection, TVS on the motor rail(s), driver and H-bridge
+  decoupling and PCA9685 reservoir cap.
+* **Safety / E-stop** path: hardware disable of drivers, PCA9685 `/OE` **and the
+  shared bow `BOW_EN`** (§21.2), ESP32 kept powered.
 * Net labels and connector pinouts matching `../BOM.md` and `../wiring/WIRING.md`.
